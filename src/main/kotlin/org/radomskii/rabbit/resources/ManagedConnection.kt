@@ -12,11 +12,11 @@ import java.util.concurrent.atomic.AtomicBoolean
  * need one long-lived channel bound to their own thread for their entire lifecycle.
  */
 internal class ManagedConnection(
-    private val connection: Connection,
+    private val connection: Connection,//TODO name it delegate
     channelPoolConfig: ChannelPoolConfig
 ) {
     val id: String = UUID.randomUUID().toString()
-    private val channelPool = ChannelPool({ connection.createChannel() }, channelPoolConfig)//TODO no need to pool channels. publish task need to executed and then channel need to closed
+    private val channelPool = ChannelPool({ connection.createChannel() }, channelPoolConfig)//TODO there is no need channel pooling. publish task need to executed and then channel need to closed
     private val closed = AtomicBoolean(false)
 
     val isOpen: Boolean
@@ -26,6 +26,7 @@ internal class ManagedConnection(
      * Acquire a pooled channel for a short-lived publish operation.
      */
     fun acquireChannel(): ManagedChannel {
+        //TODO no need in ManagedChannel wrapper. Publisher/Consumer use raw Channel
         check(isOpen) { "ManagedConnection $id is closed" }
         return channelPool.acquire()
     }
@@ -34,6 +35,7 @@ internal class ManagedConnection(
      * Create a new raw channel dedicated to the caller's exclusive, long-lived use (consumer workers).
      * Not tracked by the channel pool.
      */
+    //TODO name it createChannel
     fun createDedicatedChannel(): Channel {
         check(isOpen) { "ManagedConnection $id is closed" }
         return connection.createChannel()
