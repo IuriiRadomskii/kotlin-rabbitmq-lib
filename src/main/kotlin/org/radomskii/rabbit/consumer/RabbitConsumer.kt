@@ -24,6 +24,7 @@ class RabbitConsumer<T> internal constructor(
      * Start consuming, dispatching each received message to [handler] on a dedicated worker thread.
      */
     fun start(handler: MessageHandler<T>) {
+        //TODO start method should be protected by lifecycleLock
         check(running.compareAndSet(false, true)) { "RabbitConsumer already started" }
         val newContainer = ConsumerWorkerContainer(connectionPool, config, handler)
         container = newContainer
