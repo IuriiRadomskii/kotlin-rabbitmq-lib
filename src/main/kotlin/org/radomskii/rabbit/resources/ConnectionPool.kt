@@ -13,17 +13,22 @@ import java.util.concurrent.atomic.AtomicInteger
  * network interruptions or broker restarts.
  */
 internal class ConnectionPool(
-    connectionConfig: ConnectionConfig,
+    connectionConfig: ConnectionConfig,//TODO use com.rabbitmq.client.ConnectionFactory as a parameter, no need in ConnectionConfig class. client configure ConnectionFactory by her/him self
     channelPoolConfig: ChannelPoolConfig
 ) {
     private val connections: List<ManagedConnection>
-    private val roundRobin = AtomicInteger(0)
+    private val roundRobin = AtomicInteger(0)// TODO instead of round-robin use balancing by number of channels per connection at any time number of channels per connection should be almost equal. If number of channels approaching to threshold value so throw warn log. threshold Connection#channelMax
     private val closed = AtomicBoolean(false)
 
     init {
+        //TODO need separate public method init which is locked by lifecycleLock
+        //Need to make reconnections if rabbitmq is not available on application start
+        //Reconnection strategy as separate config. Default 3 tries every 10 seconds
+        //Separate AtomicBool initialized
         val factory = buildFactory(connectionConfig)
         val addresses = connectionConfig.hosts.map { Address(it, connectionConfig.port) }
         connections = List(connectionConfig.connectionCount) {
+            //TODO no need to create connections eagerly. create new connection if number of channels per connection is about 75% of Connection#channelMax
             ManagedConnection(factory.newConnection(addresses), channelPoolConfig)
         }
     }
@@ -32,7 +37,7 @@ internal class ConnectionPool(
      * Return the next connection in round-robin order, skipping any that are currently closed.
      */
     fun nextConnection(): ManagedConnection {
-        if (closed.get()) throw RabbitConnectionException("ConnectionPool is closed")
+        if (closed.get()) throw RabbitConnectionException("ConnectionPool is closed")//TODO or if initialized.get() == false
 
         val start = roundRobin.getAndIncrement()
         for (offset in connections.indices) {
@@ -42,9 +47,9 @@ internal class ConnectionPool(
         throw RabbitConnectionException("No open connections available")
     }
 
-    fun close() {
+    fun close() {//TODO close method under lifecycleLock
         if (closed.compareAndSet(false, true)) {
-            connections.forEach { it.close() }
+            connections.forEach { it.close() }//TODO there need to wait some time to all channels which is born by connection to be closed
         }
     }
 

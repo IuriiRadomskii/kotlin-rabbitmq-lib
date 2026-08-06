@@ -22,6 +22,11 @@ dependencies {
     testImplementation(kotlin("test"))
     testImplementation("org.junit.jupiter:junit-jupiter:5.10.1")
 
+    // Mocking
+    testImplementation("org.mockito:mockito-core:5.14.2")
+    testImplementation("org.mockito:mockito-junit-jupiter:5.14.2")
+    testImplementation("org.mockito.kotlin:mockito-kotlin:5.4.0")
+
     // TestContainers
     testImplementation("org.testcontainers:testcontainers:1.19.3")
     testImplementation("org.testcontainers:rabbitmq:1.19.3")
@@ -35,7 +40,22 @@ dependencies {
 }
 
 tasks.test {
-    useJUnitPlatform()
+    useJUnitPlatform {
+        excludeTags("integration")
+    }
+    jvmArgs("-XX:+EnableDynamicAgentLoading")
+}
+
+// Testcontainers-based tests, tagged "integration", require a running Docker daemon.
+// Run explicitly via `./gradlew integrationTest`; kept out of the default `test` task.
+tasks.register<Test>("integrationTest") {
+    useJUnitPlatform {
+        includeTags("integration")
+    }
+    jvmArgs("-XX:+EnableDynamicAgentLoading")
+    testClassesDirs = sourceSets.test.get().output.classesDirs
+    classpath = sourceSets.test.get().runtimeClasspath
+    shouldRunAfter(tasks.test)
 }
 kotlin {
     jvmToolchain(21)

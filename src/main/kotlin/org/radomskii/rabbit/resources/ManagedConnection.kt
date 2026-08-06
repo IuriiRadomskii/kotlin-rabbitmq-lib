@@ -16,7 +16,7 @@ internal class ManagedConnection(
     channelPoolConfig: ChannelPoolConfig
 ) {
     val id: String = UUID.randomUUID().toString()
-    private val channelPool = ChannelPool({ connection.createChannel() }, channelPoolConfig)
+    private val channelPool = ChannelPool({ connection.createChannel() }, channelPoolConfig)//TODO no need to pool channels. publish task need to executed and then channel need to closed
     private val closed = AtomicBoolean(false)
 
     val isOpen: Boolean

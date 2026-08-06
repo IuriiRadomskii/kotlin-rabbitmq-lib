@@ -16,3 +16,8 @@
 - Java 21
 - Gradle
 - RabbitMQ Client Library
+
+## Тестирование
+- `./gradlew test` - юнит-тесты (JUnit 5, Mockito, AssertJ), не требуют Docker
+- `./gradlew integrationTest` - интеграционные тесты (Testcontainers), поднимают реальный
+  RabbitMQ в контейнере; требуют запущенный Docker
