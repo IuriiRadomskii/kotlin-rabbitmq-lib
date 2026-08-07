@@ -1,9 +1,11 @@
 package org.radomskii.rabbit
 
+import com.rabbitmq.client.Address
+import com.rabbitmq.client.ConnectionFactory
 import org.radomskii.rabbit.config.ChannelPoolConfig
-import org.radomskii.rabbit.config.ConnectionConfig
 import org.radomskii.rabbit.config.ConsumerConfig
 import org.radomskii.rabbit.config.PublisherConfig
+import org.radomskii.rabbit.config.ReconnectionConfig
 import org.radomskii.rabbit.consumer.RabbitConsumer
 import org.radomskii.rabbit.publisher.RabbitPublisher
 import org.radomskii.rabbit.resources.ConnectionPool
@@ -17,14 +19,22 @@ import java.util.concurrent.atomic.AtomicBoolean
  * and [close] it once when the application shuts down to release all network resources.
  */
 class RabbitMQClient private constructor(
-    connectionConfig: ConnectionConfig,
-    channelPoolConfig: ChannelPoolConfig
+    connectionFactory: ConnectionFactory,
+    addresses: List<Address>,
+    connectionCount: Int,
+    channelPoolConfig: ChannelPoolConfig,
+    reconnectionConfig: ReconnectionConfig
 ) : Closeable {
 
-    private val connectionPool = ConnectionPool(connectionConfig, channelPoolConfig)
+    private val connectionPool =
+        ConnectionPool(connectionFactory, channelPoolConfig, addresses, connectionCount, reconnectionConfig)
     private val publishers = CopyOnWriteArrayList<RabbitPublisher<*>>()
     private val consumers = CopyOnWriteArrayList<RabbitConsumer<*>>()
     private val closed = AtomicBoolean(false)
+
+    init {
+        connectionPool.init()
+    }
 
     /**
      * Create a new publisher sharing this client's connection pool.
@@ -67,16 +77,39 @@ class RabbitMQClient private constructor(
      * Builds a [RabbitMQClient].
      */
     class Builder {
-        private var connectionConfig: ConnectionConfig? = null
+        private var connectionFactory: ConnectionFactory? = null
+        private var addresses: List<Address> = emptyList()
+        private var connectionCount: Int = 1
         private var channelPoolConfig: ChannelPoolConfig = ChannelPoolConfig()
+        private var reconnectionConfig: ReconnectionConfig = ReconnectionConfig()
 
-        fun connectionConfig(config: ConnectionConfig) = apply { this.connectionConfig = config }
+        /**
+         * The [ConnectionFactory] to open connections with, fully configured by the caller
+         * (credentials, virtual host, timeouts, heartbeat, etc.). Must have automatic recovery
+         * enabled - this client relies on it for resilience.
+         */
+        fun connectionFactory(factory: ConnectionFactory) = apply { this.connectionFactory = factory }
+
+        /**
+         * Broker addresses to connect to. When left empty (the default), connections are opened
+         * via [ConnectionFactory.newConnection] using the factory's own host/port.
+         */
+        fun addresses(addresses: List<Address>) = apply { this.addresses = addresses }
+
+        /**
+         * Number of physical connections to open and round-robin across. Defaults to 1.
+         */
+        fun connectionCount(count: Int) = apply { this.connectionCount = count }
 
         fun channelPoolConfig(config: ChannelPoolConfig) = apply { this.channelPoolConfig = config }
 
+        fun reconnectionConfig(config: ReconnectionConfig) = apply { this.reconnectionConfig = config }
+
         fun build(): RabbitMQClient {
-            val resolvedConnectionConfig = requireNotNull(connectionConfig) { "connectionConfig must be set" }
-            return RabbitMQClient(resolvedConnectionConfig, channelPoolConfig)
+            val resolvedConnectionFactory = requireNotNull(connectionFactory) { "connectionFactory must be set" }
+            return RabbitMQClient(
+                resolvedConnectionFactory, addresses, connectionCount, channelPoolConfig, reconnectionConfig
+            )
         }
     }
 

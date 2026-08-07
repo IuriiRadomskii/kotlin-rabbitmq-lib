@@ -1,5 +1,6 @@
 package org.radomskii.rabbit.integration
 
+import com.rabbitmq.client.Address
 import com.rabbitmq.client.ConnectionFactory
 import org.assertj.core.api.Assertions.assertThat
 import org.assertj.core.api.Assertions.assertThatThrownBy
@@ -9,7 +10,6 @@ import org.junit.jupiter.api.Tag
 import org.junit.jupiter.api.Test
 import org.radomskii.rabbit.RabbitMQClient
 import org.radomskii.rabbit.config.ChannelPoolConfig
-import org.radomskii.rabbit.config.ConnectionConfig
 import org.radomskii.rabbit.config.ConsumerConfig
 import org.radomskii.rabbit.config.PublisherConfig
 import org.radomskii.rabbit.model.ConsumeResult
@@ -45,14 +45,13 @@ class RabbitClientIntegrationTest {
         @JvmStatic
         fun setUp() {
             client = RabbitMQClient.builder()
-                .connectionConfig(
-                    ConnectionConfig(
-                        hosts = listOf(rabbitContainer.host),
-                        port = rabbitContainer.amqpPort,
-                        username = rabbitContainer.adminUsername,
+                .connectionFactory(
+                    ConnectionFactory().apply {
+                        username = rabbitContainer.adminUsername
                         password = rabbitContainer.adminPassword
-                    )
+                    }
                 )
+                .addresses(listOf(Address(rabbitContainer.host, rabbitContainer.amqpPort)))
                 .channelPoolConfig(ChannelPoolConfig())
                 .build()
         }

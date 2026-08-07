@@ -1,43 +1,111 @@
 package org.radomskii.rabbit.resources
 
 import com.rabbitmq.client.Address
+import com.rabbitmq.client.Connection
 import com.rabbitmq.client.ConnectionFactory
 import org.radomskii.rabbit.config.ChannelPoolConfig
-import org.radomskii.rabbit.config.ConnectionConfig
+import org.radomskii.rabbit.config.ReconnectionConfig
+import org.slf4j.LoggerFactory
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicInteger
+import java.util.concurrent.locks.ReentrantLock
+import kotlin.concurrent.withLock
 
 /**
- * Pool of [ManagedConnection]s opened eagerly at construction time, distributed round-robin.
- * Relies on the underlying RabbitMQ client's automatic connection/channel recovery to survive
- * network interruptions or broker restarts.
+ * Pool of [ManagedConnection]s, distributed round-robin. Must be [init]ialized before
+ * [nextConnection] can be used. Relies on the underlying RabbitMQ client's automatic
+ * connection/channel recovery to survive network interruptions or broker restarts once open;
+ * [init] itself retries per [ReconnectionConfig] to ride out a broker that is briefly
+ * unavailable at application startup.
+ *
+ * @param connectionFactory configured by the caller (credentials, timeouts, heartbeat, etc.);
+ *   must have automatic recovery enabled, since the pool relies on it for resilience
+ * @param addresses broker addresses to connect to; when empty, connections are opened via
+ *   [ConnectionFactory.newConnection] (no-arg), using the factory's own host/port
+ * @param connectionCount number of physical connections to open and round-robin across
  */
 internal class ConnectionPool(
-    connectionConfig: ConnectionConfig,//TODO use com.rabbitmq.client.ConnectionFactory as a parameter, no need in ConnectionConfig class. client configure ConnectionFactory by her/him self
-    channelPoolConfig: ChannelPoolConfig
+    private val connectionFactory: ConnectionFactory,
+    private val channelPoolConfig: ChannelPoolConfig,
+    private val addresses: List<Address> = emptyList(),
+    private val connectionCount: Int = 1,
+    private val reconnectionConfig: ReconnectionConfig = ReconnectionConfig(),
+    private val connectionSupplier: () -> Connection = {
+        if (addresses.isEmpty()) connectionFactory.newConnection() else connectionFactory.newConnection(addresses)
+    }
 ) {
-    private val connections: List<ManagedConnection>
-    private val roundRobin = AtomicInteger(0)// TODO instead of round-robin use balancing by number of channels per connection at any time number of channels per connection should be almost equal. If number of channels approaching to threshold value so throw warn log. threshold Connection#channelMax
-    private val closed = AtomicBoolean(false)
-
     init {
-        //TODO need separate public method init which is locked by lifecycleLock
-        //Need to make reconnections if rabbitmq is not available on application start
-        //Reconnection strategy as separate config. Default 3 tries every 10 seconds
-        //Separate AtomicBool initialized
-        val factory = buildFactory(connectionConfig)
-        val addresses = connectionConfig.hosts.map { Address(it, connectionConfig.port) }
-        connections = List(connectionConfig.connectionCount) {
-            //TODO no need to create connections eagerly. create new connection if number of channels per connection is about 75% of Connection#channelMax
-            ManagedConnection(factory.newConnection(addresses), channelPoolConfig)
+        require(connectionCount > 0) { "connectionCount must be positive" }
+        require(connectionFactory.isAutomaticRecoveryEnabled) {
+            "connectionFactory must have automatic recovery enabled (isAutomaticRecoveryEnabled = true) - " +
+                "ConnectionPool relies on it to survive network interruptions and broker restarts"
         }
+    }
+
+    private val lifecycleLock = ReentrantLock()
+    private val initialized = AtomicBoolean(false)
+    private val closed = AtomicBoolean(false)
+    private val roundRobin = AtomicInteger(0)// TODO instead of round-robin use balancing by number of channels per connection at any time number of channels per connection should be almost equal. If number of channels approaching to threshold value so throw warn log. threshold Connection#channelMax
+    private lateinit var connections: List<ManagedConnection>
+
+    /**
+     * Open [connectionCount] connections, retrying per [ReconnectionConfig] when the broker is
+     * unavailable. Must be called once before [nextConnection] is used. Idempotent while the
+     * pool stays open; throws if called after [close].
+     */
+    fun init() {
+        lifecycleLock.withLock {
+            check(!closed.get()) { "ConnectionPool is closed" }
+            if (initialized.get()) return
+
+            //TODO no need to create connections eagerly. create new connection if number of channels per connection is about 75% of Connection#channelMax
+            val opened = mutableListOf<ManagedConnection>()
+            try {
+                repeat(connectionCount) {
+                    opened.add(ManagedConnection(connectWithRetry(), channelPoolConfig))
+                }
+            } catch (e: Exception) {
+                opened.forEach { it.close() }
+                throw e
+            }
+            connections = opened
+            initialized.set(true)
+        }
+    }
+
+    private fun connectWithRetry(): Connection {
+        var lastError: Exception? = null
+        repeat(reconnectionConfig.maxAttempts) { attempt ->
+            try {
+                return connectionSupplier()
+            } catch (e: Exception) {
+                lastError = e
+                log.warn(
+                    "Failed to open RabbitMQ connection (attempt {}/{})",
+                    attempt + 1, reconnectionConfig.maxAttempts, e
+                )
+                if (attempt < reconnectionConfig.maxAttempts - 1) {
+                    try {
+                        Thread.sleep(reconnectionConfig.retryInterval.toMillis())
+                    } catch (ie: InterruptedException) {
+                        Thread.currentThread().interrupt()
+                        throw RabbitConnectionException("Interrupted while retrying RabbitMQ connection", ie)
+                    }
+                }
+            }
+        }
+        throw RabbitConnectionException(
+            "Failed to open RabbitMQ connection after ${reconnectionConfig.maxAttempts} attempts",
+            lastError
+        )
     }
 
     /**
      * Return the next connection in round-robin order, skipping any that are currently closed.
      */
     fun nextConnection(): ManagedConnection {
-        if (closed.get()) throw RabbitConnectionException("ConnectionPool is closed")//TODO or if initialized.get() == false
+        if (closed.get()) throw RabbitConnectionException("ConnectionPool is closed")
+        if (!initialized.get()) throw RabbitConnectionException("ConnectionPool is not initialized")
 
         val start = roundRobin.getAndIncrement()
         for (offset in connections.indices) {
@@ -47,20 +115,15 @@ internal class ConnectionPool(
         throw RabbitConnectionException("No open connections available")
     }
 
-    fun close() {//TODO close method under lifecycleLock
-        if (closed.compareAndSet(false, true)) {
-            connections.forEach { it.close() }//TODO there need to wait some time to all channels which is born by connection to be closed
+    fun close() {
+        lifecycleLock.withLock {//TODO there need to wait some time to all channels which is born by connection to be closed
+            if (closed.compareAndSet(false, true) && ::connections.isInitialized) {
+                connections.forEach { it.close() }
+            }
         }
     }
 
-    private fun buildFactory(config: ConnectionConfig): ConnectionFactory = ConnectionFactory().apply {
-        username = config.username
-        password = config.password
-        virtualHost = config.virtualHost
-        connectionTimeout = config.connectionTimeout.toMillis().toInt()
-        requestedHeartbeat = config.heartbeatInterval.seconds.toInt()
-        isAutomaticRecoveryEnabled = true
-        isTopologyRecoveryEnabled = true
-        networkRecoveryInterval = config.networkRecoveryInterval.toMillis()
+    private companion object {
+        val log = LoggerFactory.getLogger(ConnectionPool::class.java)
     }
 }

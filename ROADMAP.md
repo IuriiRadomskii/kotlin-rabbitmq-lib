@@ -6,7 +6,7 @@
     - **resources** - `ConnectionPool`, `ChannelPool`, `ManagedConnection`, `ManagedChannel`
     - **publisher** - `RabbitPublisher`
     - **consumer** - `RabbitConsumer`, `ConsumerWorker`, `ConsumerWorkerContainer`
-    - **config** - `ConnectionConfig`, `ChannelPoolConfig`, `PublisherConfig`, `ConsumerConfig`
+    - **config** - `ChannelPoolConfig`, `PublisherConfig`, `ConsumerConfig`, `ReconnectionConfig`
     - **model** - `MessagePayload`, `MessageMetadata`, `IncomingMessage`, `ConsumeResult`
     - **serialization** - `MessageSerializer`, `JsonMessageSerializer` (Gson)
     - `RabbitMQClient` - entry point/builder, owns `ConnectionPool`, creates publishers and consumers
@@ -17,23 +17,16 @@
     - `Nack(requeue = true)` -> message redelivery
 - `logback-test.xml` for readable test output
 - README updated with testing section
-
-## Known Issue (Build Blocker)
-
-`RabbitMQClient.kt:56` calls `RabbitPublisher.close()`, but the method (along with `isClosed()` and in-flight publish tracking) was removed during manual editing of `RabbitPublisher.kt` (commit `e64575c`). Currently `./gradlew compileKotlin` fails with `Unresolved reference 'close'`, and some `RabbitPublisherTest` tests (`shouldRejectPublishAfterClose`, `shouldWaitForInFlightPublishesBeforeCloseReturns`) don't match the current code.
-
-Need to decide: restore graceful shutdown with waiting for in-flight publishes, or redesign `RabbitPublisher` lifecycle differently - and then fix `RabbitMQClient.close()` and tests accordingly.
+- Restored `RabbitPublisher.close()`/`isClosed()` with in-flight publish tracking (`publish` increments/decrements an `inFlight` counter around the whole call; `close()` sets `closed` and waits on a monitor, bounded by `PublisherConfig.closeTimeout`, for in-flight publishes to finish). `./gradlew compileKotlin` and `./gradlew test` pass again.
+- `ConnectionPool` startup lifecycle: added `ReconnectionConfig` (default 3 attempts / 10s apart, reusable later by `ConsumerWorkerContainer`); split construction from a new public `init()`, both guarded by a `lifecycleLock`; connection creation is now injectable (`connectionFactory: () -> Connection`, mirroring `ChannelPool`'s `channelFactory` seam) so `connectWithRetry()` can be unit-tested without Docker; `init()` cleans up any partially-opened connections on failure; `nextConnection()` now checks `initialized` as well as `closed`. Wired into `RabbitMQClient` (`Builder.reconnectionConfig(...)`, calls `connectionPool.init()` in its own `init` block) so `build()` behaves the same as before from the library consumer's point of view. New `ConnectionPoolTest` (9 tests). Deliberately left out: waiting for all channels to close in `close()` - depends on the `ChannelPool`-vs-create-per-publish decision below.
+- `ConnectionPool` now takes a client-supplied, pre-configured `com.rabbitmq.client.ConnectionFactory` instead of the library's own `ConnectionConfig` (removed). New constructor params `addresses: List<Address>` (default empty -> `factory.newConnection()`, otherwise `factory.newConnection(addresses)`) and `connectionCount: Int` (default 1) cover what `ConnectionFactory` itself doesn't. The injectable retry-seam lambda was renamed `connectionFactory` -> `connectionSupplier` to free the name. Added `require(connectionFactory.isAutomaticRecoveryEnabled)` in `init {}` - the pool's resilience story depends on it, so a misconfigured client factory fails fast instead of silently never recovering. `RabbitMQClient.Builder` gained `connectionFactory(...)`/`addresses(...)`/`connectionCount(...)`, replacing `connectionConfig(...)`. `ConnectionPoolTest` grew 3 tests (automatic-recovery validation, no-arg vs addressed `newConnection` dispatch); `RabbitClientIntegrationTest` updated to build its own `ConnectionFactory`.
 
 ## Open Questions from Author (from TODO comments in code)
 
 ### `resources/ConnectionPool.kt`
-- Accept `com.rabbitmq.client.ConnectionFactory` as parameter instead of `ConnectionConfig` - let library client configure the factory
 - Replace round-robin connection selection with load balancing by number of open channels per connection (channel count per connection should be approximately equal at any time); warn log when approaching `Connection#channelMax` threshold
-- Separate public `init()` method, protected by `lifecycleLock`
-- Reconnection when RabbitMQ is unavailable at application startup - strategy as separate config (default: 3 attempts every 10 seconds)
 - Don't create all connections eagerly - open new connection when channel count on existing connection approaches ~75% of `channelMax`
-- `close()` - protect with `lifecycleLock`; wait for all channels spawned by the connection to close
-- `nextConnection()` - check not only `closed`, but also `initialized`
+- `close()` - wait for all channels spawned by the connection to close (now under `lifecycleLock`, but doesn't wait yet)
 
 ### `resources/ManagedConnection.kt`
 - Question: perhaps channels don't need to be pooled at all - create channel for publish and close it immediately after use, instead of `ChannelPool`
@@ -43,7 +36,7 @@ Need to decide: restore graceful shutdown with waiting for in-flight publishes, 
 - Question: what to do if `deliveryQueue.poll` throws `InterruptedException` - should `Thread.currentThread().interrupt()` be called?
 
 ### `consumer/ConsumerWorkerContainer.kt`
-- `nextConnection()`/`createDedicatedChannel()` can throw exception if RabbitMQ is unavailable at startup - need try-catch and several attempts; reconnection strategy as `RabbitConsumer` parameter (default: 3 attempts every 10 seconds)
+- `nextConnection()`/`createDedicatedChannel()` can throw exception if RabbitMQ is unavailable at startup - need try-catch and several attempts; reuse the new `config.ReconnectionConfig` (already used by `ConnectionPool`) as a `RabbitConsumer` parameter instead of designing a separate strategy
 - `supervise()` - remove `Thread.sleep`, use `ScheduledExecutorService`
 - executor in `stop()` - consider replacing with virtual-thread pool executor
 
@@ -52,13 +45,11 @@ Need to decide: restore graceful shutdown with waiting for in-flight publishes, 
 
 ## Proposed Next Steps
 
-1. Fix the build - decide how `RabbitPublisher` should close (graceful shutdown / in-flight publishes), bring `RabbitMQClient.close()` and tests into alignment
-2. Make decisions on open architectural questions above:
-    - `ConnectionFactory` instead of `ConnectionConfig`
+1. Make decisions on open architectural questions above:
     - channel pool vs create-per-publish
     - lazy connection creation as channel count grows + load balancing instead of round-robin
-    - unified reconnection strategy for `ConnectionPool` and `ConsumerWorkerContainer`
-    - `lifecycleLock` around init/start/close methods
-3. Implement accepted decisions
-4. Update and expand unit and integration tests for new logic
-5. Run `./gradlew test` and `./gradlew integrationTest`
+    - wire `ReconnectionConfig` into `ConsumerWorkerContainer`/`RabbitConsumer`
+    - `lifecycleLock` around `RabbitConsumer.start()`
+2. Implement accepted decisions
+3. Update and expand unit and integration tests for new logic
+4. Run `./gradlew test` and `./gradlew integrationTest`

@@ -28,51 +28,85 @@ class RabbitPublisher<T> internal constructor(
 ) {
     private val closed = AtomicBoolean(false)
     private val inFlight = AtomicInteger(0)
+    private val closeLock = Object()
 
     /**
      * Publish [payload] to [exchange] with [routingKey]. Synchronous - returns once the broker
      * has accepted the publication task (and, when [PublisherConfig.mandatory] is set, once routability
      * has been confirmed or [PublisherConfig.returnListenerTimeout] has elapsed).
      *
+     * @throws IllegalStateException if this publisher has been [close]d
      * @throws MessageReturnedException if the message was mandatory and unroutable
      * @throws RabbitPublishException if the message could not be published due to a connection/channel/broker failure
      */
     fun publish(exchange: String, routingKey: String, payload: T, metadata: MessageMetadata = MessageMetadata()) {
-        check(!closed.get()) { "RabbitPublisher is closed" }
+        inFlight.incrementAndGet()
+        try {
+            check(!closed.get()) { "RabbitPublisher is closed" }
 
-        val connection = try {
-            connectionPool.nextConnection()
-        } catch (e: Exception) {
-            throw RabbitPublishException(exchange, routingKey, "Failed to obtain a connection", e)
-        }
+            val connection = try {
+                connectionPool.nextConnection()
+            } catch (e: Exception) {
+                throw RabbitPublishException(exchange, routingKey, "Failed to obtain a connection", e)
+            }
 
-        val managedChannel = try {
-            connection.acquireChannel()
-        } catch (e: Exception) {
-            throw RabbitPublishException(exchange, routingKey, "Failed to acquire a channel", e)
-        }
+            val managedChannel = try {
+                connection.acquireChannel()
+            } catch (e: Exception) {
+                throw RabbitPublishException(exchange, routingKey, "Failed to acquire a channel", e)
+            }
 
-        managedChannel.use { mc ->
-            try {
-                val body = config.serializer.serialize(payload)
-                val properties = buildProperties(metadata, body).build()
+            managedChannel.use { mc ->
+                try {
+                    val body = config.serializer.serialize(payload)
+                    val properties = buildProperties(metadata, body).build()
 
-                if (config.mandatory) {
-                    publishMandatory(mc.rawChannel(), exchange, routingKey, properties, body.bytes)
-                } else {
-                    mc.rawChannel().basicPublish(exchange, routingKey, false, properties, body.bytes)
+                    if (config.mandatory) {
+                        publishMandatory(mc.rawChannel(), exchange, routingKey, properties, body.bytes)
+                    } else {
+                        mc.rawChannel().basicPublish(exchange, routingKey, false, properties, body.bytes)
+                    }
+                } catch (e: MessageReturnedException) {
+                    throw e
+                } catch (e: IOException) {
+                    mc.invalidate()
+                    throw RabbitPublishException(exchange, routingKey, "Failed to publish message", e)
+                } catch (e: ShutdownSignalException) {
+                    mc.invalidate()
+                    throw RabbitPublishException(exchange, routingKey, "Failed to publish message", e)
                 }
-            } catch (e: MessageReturnedException) {
-                throw e
-            } catch (e: IOException) {
-                mc.invalidate()
-                throw RabbitPublishException(exchange, routingKey, "Failed to publish message", e)
-            } catch (e: ShutdownSignalException) {
-                mc.invalidate()
-                throw RabbitPublishException(exchange, routingKey, "Failed to publish message", e)
+            }
+        } finally {
+            synchronized(closeLock) {
+                if (inFlight.decrementAndGet() == 0) {
+                    closeLock.notifyAll()
+                }
             }
         }
     }
+
+    /**
+     * Marks this publisher as closed - subsequent [publish] calls throw [IllegalStateException] -
+     * then waits, bounded by [PublisherConfig.closeTimeout], for publishes already in flight to finish.
+     * Idempotent.
+     */
+    fun close() {
+        if (closed.compareAndSet(false, true)) {
+            val deadlineNanos = System.nanoTime() + config.closeTimeout.toNanos()
+            synchronized(closeLock) {
+                while (inFlight.get() > 0) {
+                    val remainingMillis = TimeUnit.NANOSECONDS.toMillis(deadlineNanos - System.nanoTime())
+                    if (remainingMillis <= 0) break
+                    closeLock.wait(remainingMillis)
+                }
+            }
+        }
+    }
+
+    /**
+     * Whether [close] has been called on this publisher.
+     */
+    fun isClosed(): Boolean = closed.get()
 
     private fun publishMandatory(
         channel: Channel,
