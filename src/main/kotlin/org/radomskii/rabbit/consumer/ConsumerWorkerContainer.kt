@@ -43,7 +43,7 @@ internal class ConsumerWorkerContainer<T>(
     private fun createAndStartWorker(workerId: Int): ConsumerWorker<T> {
         val connection = connectionPool.nextConnection()//TODO nextConnection can throw an exception if RabbitMQ instance is unavailable at the start of the client application, so there has to be try-catch on nextConnection and several tries to obtain connection to rabbitmq instance.
         //Reconnection strategy has to be defined as the RabbitConsumer parameters. The default strategy is 3 tries every 10 seconds and then exception if rabbitmq is still unavailable
-        val channel = connection.createDedicatedChannel()//TODO same for channels
+        val channel = connection.createChannel()//TODO same for channels
         val worker = ConsumerWorker(workerId, channel, config, handler)
         worker.start()
         return worker

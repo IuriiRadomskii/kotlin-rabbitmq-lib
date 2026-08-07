@@ -2,7 +2,6 @@ package org.radomskii.rabbit
 
 import com.rabbitmq.client.Address
 import com.rabbitmq.client.ConnectionFactory
-import org.radomskii.rabbit.config.ChannelPoolConfig
 import org.radomskii.rabbit.config.ConsumerConfig
 import org.radomskii.rabbit.config.PublisherConfig
 import org.radomskii.rabbit.config.ReconnectionConfig
@@ -22,12 +21,10 @@ class RabbitMQClient private constructor(
     connectionFactory: ConnectionFactory,
     addresses: List<Address>,
     connectionCount: Int,
-    channelPoolConfig: ChannelPoolConfig,
     reconnectionConfig: ReconnectionConfig
 ) : Closeable {
 
-    private val connectionPool =
-        ConnectionPool(connectionFactory, channelPoolConfig, addresses, connectionCount, reconnectionConfig)
+    private val connectionPool = ConnectionPool(connectionFactory, addresses, connectionCount, reconnectionConfig)
     private val publishers = CopyOnWriteArrayList<RabbitPublisher<*>>()
     private val consumers = CopyOnWriteArrayList<RabbitConsumer<*>>()
     private val closed = AtomicBoolean(false)
@@ -59,7 +56,7 @@ class RabbitMQClient private constructor(
 
     /**
      * Close every publisher and consumer created by this client (draining in-flight work first),
-     * then close all pooled connections and channels. Idempotent.
+     * then close all pooled connections. Idempotent.
      */
     override fun close() {
         if (closed.compareAndSet(false, true)) {
@@ -80,7 +77,6 @@ class RabbitMQClient private constructor(
         private var connectionFactory: ConnectionFactory? = null
         private var addresses: List<Address> = emptyList()
         private var connectionCount: Int = 1
-        private var channelPoolConfig: ChannelPoolConfig = ChannelPoolConfig()
         private var reconnectionConfig: ReconnectionConfig = ReconnectionConfig()
 
         /**
@@ -101,15 +97,11 @@ class RabbitMQClient private constructor(
          */
         fun connectionCount(count: Int) = apply { this.connectionCount = count }
 
-        fun channelPoolConfig(config: ChannelPoolConfig) = apply { this.channelPoolConfig = config }
-
         fun reconnectionConfig(config: ReconnectionConfig) = apply { this.reconnectionConfig = config }
 
         fun build(): RabbitMQClient {
             val resolvedConnectionFactory = requireNotNull(connectionFactory) { "connectionFactory must be set" }
-            return RabbitMQClient(
-                resolvedConnectionFactory, addresses, connectionCount, channelPoolConfig, reconnectionConfig
-            )
+            return RabbitMQClient(resolvedConnectionFactory, addresses, connectionCount, reconnectionConfig)
         }
     }
 

@@ -31,7 +31,7 @@ class RabbitConsumerTest {
         whenever(rawChannel.basicConsume(any<String>(), any<Boolean>(), any<DeliverCallback>(), any<CancelCallback>()))
             .thenReturn("consumer-tag")
         val managedConnection = mock<ManagedConnection>()
-        whenever(managedConnection.createDedicatedChannel()).thenReturn(rawChannel)
+        whenever(managedConnection.createChannel()).thenReturn(rawChannel)
         val connectionPool = mock<ConnectionPool>()
         whenever(connectionPool.nextConnection()).thenReturn(managedConnection)
 

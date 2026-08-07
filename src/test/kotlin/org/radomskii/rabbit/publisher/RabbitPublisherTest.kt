@@ -12,14 +12,11 @@ import org.mockito.kotlin.any
 import org.mockito.kotlin.argumentCaptor
 import org.mockito.kotlin.eq
 import org.mockito.kotlin.mock
-import org.mockito.kotlin.never
 import org.mockito.kotlin.verify
 import org.mockito.kotlin.whenever
 import org.radomskii.rabbit.config.PublisherConfig
 import org.radomskii.rabbit.model.MessagePayload
-import org.radomskii.rabbit.resources.ChannelPool
 import org.radomskii.rabbit.resources.ConnectionPool
-import org.radomskii.rabbit.resources.ManagedChannel
 import org.radomskii.rabbit.resources.ManagedConnection
 import org.radomskii.rabbit.serialization.MessageSerializer
 import java.io.IOException
@@ -34,17 +31,14 @@ class RabbitPublisherTest {
 
     private data class Fixture(
         val publisher: RabbitPublisher<String>,
-        val rawChannel: Channel,
-        val channelPool: ChannelPool
+        val rawChannel: Channel
     )
 
     private fun fixture(mandatory: Boolean = false, returnListenerTimeout: Duration = Duration.ofMillis(200)): Fixture {
         val rawChannel = mock<Channel>()
         whenever(rawChannel.isOpen).thenReturn(true)
-        val channelPool = mock<ChannelPool>()
-        val managedChannel = ManagedChannel(rawChannel, channelPool)
         val managedConnection = mock<ManagedConnection>()
-        whenever(managedConnection.acquireChannel()).thenReturn(managedChannel)
+        whenever(managedConnection.createChannel()).thenReturn(rawChannel)
         val connectionPool = mock<ConnectionPool>()
         whenever(connectionPool.nextConnection()).thenReturn(managedConnection)
 
@@ -53,35 +47,34 @@ class RabbitPublisherTest {
             mandatory = mandatory,
             returnListenerTimeout = returnListenerTimeout
         )
-        return Fixture(RabbitPublisher(connectionPool, config), rawChannel, channelPool)
+        return Fixture(RabbitPublisher(connectionPool, config), rawChannel)
     }
 
     @Test
-    fun shouldPublishSerializedPayloadAndReleaseChannel() {
-        val (publisher, rawChannel, channelPool) = fixture()
+    fun shouldPublishSerializedPayloadAndCloseChannel() {
+        val (publisher, rawChannel) = fixture()
 
         publisher.publish("my-exchange", "my.key", "hello")
 
         verify(rawChannel).basicPublish(eq("my-exchange"), eq("my.key"), eq(false), any(), any())
-        verify(channelPool).release(any())
+        verify(rawChannel).close()
     }
 
     @Test
-    fun shouldWrapIOExceptionAndInvalidateChannel() {
-        val (publisher, rawChannel, channelPool) = fixture()
+    fun shouldWrapIOExceptionAndStillCloseChannel() {
+        val (publisher, rawChannel) = fixture()
         whenever(rawChannel.basicPublish(any(), any(), any<Boolean>(), any(), any())).thenThrow(IOException("boom"))
 
         assertThatThrownBy { publisher.publish("ex", "key", "hi") }
             .isInstanceOf(RabbitPublishException::class.java)
             .hasCauseInstanceOf(IOException::class.java)
 
-        verify(channelPool).discard(any())
-        verify(channelPool, never()).release(any())
+        verify(rawChannel).close()
     }
 
     @Test
     fun shouldThrowMessageReturnedExceptionWhenMandatoryPublishIsReturned() {
-        val (publisher, rawChannel, _) = fixture(mandatory = true)
+        val (publisher, rawChannel) = fixture(mandatory = true)
         val listener = mock<ReturnListener>()
         val callbackCaptor = argumentCaptor<ReturnCallback>()
         whenever(rawChannel.addReturnListener(callbackCaptor.capture())).thenReturn(listener)
@@ -95,11 +88,12 @@ class RabbitPublisherTest {
             .isInstanceOf(MessageReturnedException::class.java)
 
         verify(rawChannel).removeReturnListener(listener)
+        verify(rawChannel).close()
     }
 
     @Test
     fun shouldNotThrowWhenMandatoryPublishRoutesSuccessfully() {
-        val (publisher, rawChannel, _) = fixture(mandatory = true)
+        val (publisher, rawChannel) = fixture(mandatory = true)
         whenever(rawChannel.addReturnListener(any<ReturnCallback>())).thenReturn(mock())
 
         publisher.publish("ex", "key", "hi")
@@ -109,7 +103,7 @@ class RabbitPublisherTest {
 
     @Test
     fun shouldRejectPublishAfterClose() {
-        val (publisher, _, _) = fixture()
+        val (publisher, _) = fixture()
         publisher.close()
 
         assertThatThrownBy { publisher.publish("ex", "key", "hi") }
@@ -122,15 +116,13 @@ class RabbitPublisherTest {
     fun shouldWaitForInFlightPublishesBeforeCloseReturns() {
         val rawChannel = mock<Channel>()
         whenever(rawChannel.isOpen).thenReturn(true)
-        val channelPool = mock<ChannelPool>()
-        val managedChannel = ManagedChannel(rawChannel, channelPool)
         val managedConnection = mock<ManagedConnection>()
         val releaseGate = java.util.concurrent.CountDownLatch(1)
         whenever(rawChannel.basicPublish(any(), any(), any<Boolean>(), any(), any())).thenAnswer {
             releaseGate.await()
             null
         }
-        whenever(managedConnection.acquireChannel()).thenReturn(managedChannel)
+        whenever(managedConnection.createChannel()).thenReturn(rawChannel)
         val connectionPool = mock<ConnectionPool>()
         whenever(connectionPool.nextConnection()).thenReturn(managedConnection)
         val config = PublisherConfig(serializer = serializer, closeTimeout = Duration.ofSeconds(5))

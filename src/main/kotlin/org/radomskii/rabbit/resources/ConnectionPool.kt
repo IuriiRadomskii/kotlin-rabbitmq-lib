@@ -1,9 +1,7 @@
 package org.radomskii.rabbit.resources
 
-import com.rabbitmq.client.Address
 import com.rabbitmq.client.Connection
 import com.rabbitmq.client.ConnectionFactory
-import org.radomskii.rabbit.config.ChannelPoolConfig
 import org.radomskii.rabbit.config.ReconnectionConfig
 import org.slf4j.LoggerFactory
 import java.util.concurrent.atomic.AtomicBoolean
@@ -26,13 +24,8 @@ import kotlin.concurrent.withLock
  */
 internal class ConnectionPool(
     private val connectionFactory: ConnectionFactory,
-    private val channelPoolConfig: ChannelPoolConfig,
-    private val addresses: List<Address> = emptyList(),
     private val connectionCount: Int = 1,
-    private val reconnectionConfig: ReconnectionConfig = ReconnectionConfig(),
-    private val connectionSupplier: () -> Connection = {
-        if (addresses.isEmpty()) connectionFactory.newConnection() else connectionFactory.newConnection(addresses)
-    }
+    private val reconnectionConfig: ReconnectionConfig = ReconnectionConfig()
 ) {
     init {
         require(connectionCount > 0) { "connectionCount must be positive" }
@@ -62,7 +55,7 @@ internal class ConnectionPool(
             val opened = mutableListOf<ManagedConnection>()
             try {
                 repeat(connectionCount) {
-                    opened.add(ManagedConnection(connectWithRetry(), channelPoolConfig))
+                    opened.add(ManagedConnection(connectWithRetry()))
                 }
             } catch (e: Exception) {
                 opened.forEach { it.close() }
@@ -77,7 +70,7 @@ internal class ConnectionPool(
         var lastError: Exception? = null
         repeat(reconnectionConfig.maxAttempts) { attempt ->
             try {
-                return connectionSupplier()
+                return connectionFactory.newConnection()
             } catch (e: Exception) {
                 lastError = e
                 log.warn(
@@ -116,7 +109,7 @@ internal class ConnectionPool(
     }
 
     fun close() {
-        lifecycleLock.withLock {//TODO there need to wait some time to all channels which is born by connection to be closed
+        lifecycleLock.withLock {
             if (closed.compareAndSet(false, true) && ::connections.isInitialized) {
                 connections.forEach { it.close() }
             }

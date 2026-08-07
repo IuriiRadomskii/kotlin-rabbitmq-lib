@@ -17,8 +17,8 @@ import java.util.concurrent.atomic.AtomicReference
 
 /**
  * Publishes messages to RabbitMQ. Thread-safe: a single instance may be used concurrently
- * from multiple threads. Each [publish] call is synchronous, acquiring a pooled channel,
- * publishing on the calling thread, and releasing the channel (try-with-resources) before returning.
+ * from multiple threads. Each [publish] call is synchronous: it opens a fresh channel,
+ * publishes on the calling thread, and closes the channel before returning.
  *
  * @param T type of the message payload
  */
@@ -50,31 +50,29 @@ class RabbitPublisher<T> internal constructor(
                 throw RabbitPublishException(exchange, routingKey, "Failed to obtain a connection", e)
             }
 
-            val managedChannel = try {
-                connection.acquireChannel()
+            val channel = try {
+                connection.createChannel()
             } catch (e: Exception) {
-                throw RabbitPublishException(exchange, routingKey, "Failed to acquire a channel", e)
+                throw RabbitPublishException(exchange, routingKey, "Failed to create a channel", e)
             }
 
-            managedChannel.use { mc ->
-                try {
-                    val body = config.serializer.serialize(payload)
-                    val properties = buildProperties(metadata, body).build()
+            try {
+                val body = config.serializer.serialize(payload)
+                val properties = buildProperties(metadata, body).build()
 
-                    if (config.mandatory) {
-                        publishMandatory(mc.rawChannel(), exchange, routingKey, properties, body.bytes)
-                    } else {
-                        mc.rawChannel().basicPublish(exchange, routingKey, false, properties, body.bytes)
-                    }
-                } catch (e: MessageReturnedException) {
-                    throw e
-                } catch (e: IOException) {
-                    mc.invalidate()
-                    throw RabbitPublishException(exchange, routingKey, "Failed to publish message", e)
-                } catch (e: ShutdownSignalException) {
-                    mc.invalidate()
-                    throw RabbitPublishException(exchange, routingKey, "Failed to publish message", e)
+                if (config.mandatory) {
+                    publishMandatory(channel, exchange, routingKey, properties, body.bytes)
+                } else {
+                    channel.basicPublish(exchange, routingKey, false, properties, body.bytes)
                 }
+            } catch (e: MessageReturnedException) {
+                throw e
+            } catch (e: IOException) {
+                throw RabbitPublishException(exchange, routingKey, "Failed to publish message", e)
+            } catch (e: ShutdownSignalException) {
+                throw RabbitPublishException(exchange, routingKey, "Failed to publish message", e)
+            } finally {
+                runCatching { if (channel.isOpen) channel.close() }
             }
         } finally {
             synchronized(closeLock) {

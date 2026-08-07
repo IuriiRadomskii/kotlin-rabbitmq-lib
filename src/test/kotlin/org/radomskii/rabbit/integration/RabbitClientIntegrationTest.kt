@@ -9,7 +9,6 @@ import org.junit.jupiter.api.BeforeAll
 import org.junit.jupiter.api.Tag
 import org.junit.jupiter.api.Test
 import org.radomskii.rabbit.RabbitMQClient
-import org.radomskii.rabbit.config.ChannelPoolConfig
 import org.radomskii.rabbit.config.ConsumerConfig
 import org.radomskii.rabbit.config.PublisherConfig
 import org.radomskii.rabbit.model.ConsumeResult
@@ -52,7 +51,6 @@ class RabbitClientIntegrationTest {
                     }
                 )
                 .addresses(listOf(Address(rabbitContainer.host, rabbitContainer.amqpPort)))
-                .channelPoolConfig(ChannelPoolConfig())
                 .build()
         }
 
