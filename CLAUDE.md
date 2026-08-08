@@ -10,11 +10,14 @@
 3. **Производительность** - используем пулы для переиспользования ресурсов
 4. **Kotlin-first** - предпочитаем идиоматичный Kotlin код (корутины, extension functions)
 
-## Стандарты кодирования
-- Не использовать корутины 
-- Все публичные API должны иметь KDoc комментарии
-- Тесты пишем на JUnit 5
-- Интеграционные тесты пишем с применением testcontainers
+## Code standards
+- No coroutines
+- Use JUnit 5
+- Use testcontainers
+- No Kdoc/JavaDoc
+- Supervision, reconnection, recovery tasks must be implemented using ScheduledExecutorService and synchronized queues
+- Strict prohibition of Thread.sleep().
+- When it is possible to avoid using any method which can throw InterruptedException
 
 # Архитектура проекта
 

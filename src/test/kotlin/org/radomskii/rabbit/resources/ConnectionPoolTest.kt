@@ -1,6 +1,5 @@
 package org.radomskii.rabbit.resources
 
-import com.rabbitmq.client.Address
 import com.rabbitmq.client.Connection
 import com.rabbitmq.client.ConnectionFactory
 import org.assertj.core.api.Assertions.assertThat
@@ -17,6 +16,10 @@ class ConnectionPoolTest {
     private fun fastReconnectionConfig(maxAttempts: Int) =
         ReconnectionConfig(maxAttempts = maxAttempts, retryInterval = Duration.ofMillis(1))
 
+    private fun mockFactory(): ConnectionFactory = mock<ConnectionFactory>().apply {
+        whenever(isAutomaticRecoveryEnabled).thenReturn(true)
+    }
+
     @Test
     fun shouldOpenConfiguredConnectionCountAndServeThemRoundRobinAfterInit() {
         val connection1 = mock<Connection>()
@@ -24,9 +27,9 @@ class ConnectionPoolTest {
         whenever(connection1.isOpen).thenReturn(true)
         whenever(connection2.isOpen).thenReturn(true)
         val rawConnections = ArrayDeque(listOf(connection1, connection2))
-        val pool = ConnectionPool(ConnectionFactory(), connectionCount = 2) {
-            rawConnections.removeFirst()
-        }
+        val factory = mockFactory()
+        whenever(factory.newConnection()).thenAnswer { rawConnections.removeFirst() }
+        val pool = ConnectionPool(factory, connectionCount = 2)
 
         pool.init()
         val first = pool.nextConnection()
@@ -39,7 +42,7 @@ class ConnectionPoolTest {
 
     @Test
     fun shouldThrowWhenNextConnectionCalledBeforeInit() {
-        val pool = ConnectionPool(ConnectionFactory()) { mock<Connection>() }
+        val pool = ConnectionPool(mockFactory())
 
         assertThatThrownBy { pool.nextConnection() }
             .isInstanceOf(RabbitConnectionException::class.java)
@@ -49,14 +52,13 @@ class ConnectionPoolTest {
     fun shouldRetryConnectionFactoryThenSucceed() {
         val rawConnection = mock<Connection>()
         whenever(rawConnection.isOpen).thenReturn(true)
+        val factory = mockFactory()
         var attempts = 0
-        val pool = ConnectionPool(
-            ConnectionFactory(),
-            reconnectionConfig = fastReconnectionConfig(maxAttempts = 3)
-        ) {
+        whenever(factory.newConnection()).thenAnswer {
             attempts++
             if (attempts < 3) throw RuntimeException("boom") else rawConnection
         }
+        val pool = ConnectionPool(factory, reconnectionConfig = fastReconnectionConfig(maxAttempts = 3))
 
         pool.init()
 
@@ -66,15 +68,14 @@ class ConnectionPoolTest {
 
     @Test
     fun shouldThrowRabbitConnectionExceptionAfterExhaustingReconnectionAttempts() {
+        val factory = mockFactory()
         var attempts = 0
         val failure = RuntimeException("boom")
-        val pool = ConnectionPool(
-            ConnectionFactory(),
-            reconnectionConfig = fastReconnectionConfig(maxAttempts = 2)
-        ) {
+        whenever(factory.newConnection()).thenAnswer {
             attempts++
             throw failure
         }
+        val pool = ConnectionPool(factory, reconnectionConfig = fastReconnectionConfig(maxAttempts = 2))
 
         assertThatThrownBy { pool.init() }
             .isInstanceOf(RabbitConnectionException::class.java)
@@ -86,11 +87,13 @@ class ConnectionPoolTest {
     fun shouldBeIdempotentWhenInitCalledTwice() {
         val rawConnection = mock<Connection>()
         whenever(rawConnection.isOpen).thenReturn(true)
+        val factory = mockFactory()
         var factoryCalls = 0
-        val pool = ConnectionPool(ConnectionFactory()) {
+        whenever(factory.newConnection()).thenAnswer {
             factoryCalls++
             rawConnection
         }
+        val pool = ConnectionPool(factory)
 
         pool.init()
         pool.init()
@@ -100,7 +103,7 @@ class ConnectionPoolTest {
 
     @Test
     fun shouldThrowWhenInitCalledAfterClose() {
-        val pool = ConnectionPool(ConnectionFactory()) { mock<Connection>() }
+        val pool = ConnectionPool(mockFactory())
         pool.close()
 
         assertThatThrownBy { pool.init() }
@@ -111,15 +114,17 @@ class ConnectionPoolTest {
     fun shouldCloseAlreadyOpenedConnectionsWhenLaterConnectionFailsDuringInit() {
         val firstConnection = mock<Connection>()
         whenever(firstConnection.isOpen).thenReturn(true)
+        val factory = mockFactory()
         var callCount = 0
-        val pool = ConnectionPool(
-            ConnectionFactory(),
-            connectionCount = 2,
-            reconnectionConfig = fastReconnectionConfig(maxAttempts = 1)
-        ) {
+        whenever(factory.newConnection()).thenAnswer {
             callCount++
             if (callCount == 1) firstConnection else throw RuntimeException("boom")
         }
+        val pool = ConnectionPool(
+            factory,
+            connectionCount = 2,
+            reconnectionConfig = fastReconnectionConfig(maxAttempts = 1)
+        )
 
         assertThatThrownBy { pool.init() }
             .isInstanceOf(RabbitConnectionException::class.java)
@@ -134,9 +139,9 @@ class ConnectionPoolTest {
         whenever(connection1.isOpen).thenReturn(true)
         whenever(connection2.isOpen).thenReturn(true)
         val rawConnections = ArrayDeque(listOf(connection1, connection2))
-        val pool = ConnectionPool(ConnectionFactory(), connectionCount = 2) {
-            rawConnections.removeFirst()
-        }
+        val factory = mockFactory()
+        whenever(factory.newConnection()).thenAnswer { rawConnections.removeFirst() }
+        val pool = ConnectionPool(factory, connectionCount = 2)
         pool.init()
 
         pool.close()
@@ -149,7 +154,9 @@ class ConnectionPoolTest {
     fun shouldThrowWhenNextConnectionCalledAfterClose() {
         val rawConnection = mock<Connection>()
         whenever(rawConnection.isOpen).thenReturn(true)
-        val pool = ConnectionPool(ConnectionFactory()) { rawConnection }
+        val factory = mockFactory()
+        whenever(factory.newConnection()).thenReturn(rawConnection)
+        val pool = ConnectionPool(factory)
         pool.init()
 
         pool.close()
@@ -162,36 +169,7 @@ class ConnectionPoolTest {
     fun shouldThrowWhenConnectionFactoryHasAutomaticRecoveryDisabled() {
         val factory = ConnectionFactory().apply { isAutomaticRecoveryEnabled = false }
 
-        assertThatThrownBy { ConnectionPool(factory) { mock<Connection>() } }
+        assertThatThrownBy { ConnectionPool(factory) }
             .isInstanceOf(IllegalArgumentException::class.java)
-    }
-
-    @Test
-    fun shouldCallNoArgNewConnectionWhenAddressesEmpty() {
-        val factory = mock<ConnectionFactory>()
-        val rawConnection = mock<Connection>()
-        whenever(rawConnection.isOpen).thenReturn(true)
-        whenever(factory.isAutomaticRecoveryEnabled).thenReturn(true)
-        whenever(factory.newConnection()).thenReturn(rawConnection)
-        val pool = ConnectionPool(factory)
-
-        pool.init()
-
-        verify(factory).newConnection()
-    }
-
-    @Test
-    fun shouldCallNewConnectionWithAddressesWhenProvided() {
-        val factory = mock<ConnectionFactory>()
-        val rawConnection = mock<Connection>()
-        whenever(rawConnection.isOpen).thenReturn(true)
-        whenever(factory.isAutomaticRecoveryEnabled).thenReturn(true)
-        val addresses = listOf(Address("host-a"), Address("host-b"))
-        whenever(factory.newConnection(addresses)).thenReturn(rawConnection)
-        val pool = ConnectionPool(factory, addresses = addresses)
-
-        pool.init()
-
-        verify(factory).newConnection(addresses)
     }
 }

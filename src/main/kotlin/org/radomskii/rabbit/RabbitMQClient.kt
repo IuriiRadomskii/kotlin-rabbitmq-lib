@@ -19,12 +19,11 @@ import java.util.concurrent.atomic.AtomicBoolean
  */
 class RabbitMQClient private constructor(
     connectionFactory: ConnectionFactory,
-    addresses: List<Address>,
     connectionCount: Int,
-    reconnectionConfig: ReconnectionConfig
+    private val reconnectionConfig: ReconnectionConfig
 ) : Closeable {
 
-    private val connectionPool = ConnectionPool(connectionFactory, addresses, connectionCount, reconnectionConfig)
+    private val connectionPool = ConnectionPool(connectionFactory, connectionCount, reconnectionConfig)
     private val publishers = CopyOnWriteArrayList<RabbitPublisher<*>>()
     private val consumers = CopyOnWriteArrayList<RabbitConsumer<*>>()
     private val closed = AtomicBoolean(false)
@@ -49,7 +48,7 @@ class RabbitMQClient private constructor(
      */
     fun <T> createConsumer(config: ConsumerConfig<T>): RabbitConsumer<T> {
         check(!closed.get()) { "RabbitMQClient is closed" }
-        val consumer = RabbitConsumer(connectionPool, config)
+        val consumer = RabbitConsumer(connectionPool, config, reconnectionConfig)
         consumers.add(consumer)
         return consumer
     }
@@ -75,33 +74,18 @@ class RabbitMQClient private constructor(
      */
     class Builder {
         private var connectionFactory: ConnectionFactory? = null
-        private var addresses: List<Address> = emptyList()
         private var connectionCount: Int = 1
         private var reconnectionConfig: ReconnectionConfig = ReconnectionConfig()
 
-        /**
-         * The [ConnectionFactory] to open connections with, fully configured by the caller
-         * (credentials, virtual host, timeouts, heartbeat, etc.). Must have automatic recovery
-         * enabled - this client relies on it for resilience.
-         */
         fun connectionFactory(factory: ConnectionFactory) = apply { this.connectionFactory = factory }
 
-        /**
-         * Broker addresses to connect to. When left empty (the default), connections are opened
-         * via [ConnectionFactory.newConnection] using the factory's own host/port.
-         */
-        fun addresses(addresses: List<Address>) = apply { this.addresses = addresses }
-
-        /**
-         * Number of physical connections to open and round-robin across. Defaults to 1.
-         */
         fun connectionCount(count: Int) = apply { this.connectionCount = count }
 
         fun reconnectionConfig(config: ReconnectionConfig) = apply { this.reconnectionConfig = config }
 
         fun build(): RabbitMQClient {
             val resolvedConnectionFactory = requireNotNull(connectionFactory) { "connectionFactory must be set" }
-            return RabbitMQClient(resolvedConnectionFactory, addresses, connectionCount, reconnectionConfig)
+            return RabbitMQClient(resolvedConnectionFactory, connectionCount, reconnectionConfig)
         }
     }
 

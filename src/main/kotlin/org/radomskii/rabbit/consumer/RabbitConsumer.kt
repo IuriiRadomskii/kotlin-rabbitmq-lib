@@ -1,9 +1,12 @@
 package org.radomskii.rabbit.consumer
 
 import org.radomskii.rabbit.config.ConsumerConfig
+import org.radomskii.rabbit.config.ReconnectionConfig
 import org.radomskii.rabbit.resources.ConnectionPool
 import java.time.Duration
 import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.locks.ReentrantLock
+import kotlin.concurrent.withLock
 
 /**
  * Consumes messages from the queues configured in [ConsumerConfig]. Not started until [start]
@@ -15,8 +18,10 @@ import java.util.concurrent.atomic.AtomicBoolean
  */
 class RabbitConsumer<T> internal constructor(
     private val connectionPool: ConnectionPool,
-    private val config: ConsumerConfig<T>
+    private val config: ConsumerConfig<T>,
+    private val reconnectionConfig: ReconnectionConfig = ReconnectionConfig()
 ) {
+    private val lifecycleLock = ReentrantLock()
     private val running = AtomicBoolean(false)
     private var container: ConsumerWorkerContainer<T>? = null
 
@@ -24,11 +29,12 @@ class RabbitConsumer<T> internal constructor(
      * Start consuming, dispatching each received message to [handler] on a dedicated worker thread.
      */
     fun start(handler: MessageHandler<T>) {
-        //TODO start method should be protected by lifecycleLock
-        check(running.compareAndSet(false, true)) { "RabbitConsumer already started" }
-        val newContainer = ConsumerWorkerContainer(connectionPool, config, handler)
-        container = newContainer
-        newContainer.start()
+        lifecycleLock.withLock {
+            check(running.compareAndSet(false, true)) { "RabbitConsumer already started" }
+            val newContainer = ConsumerWorkerContainer(connectionPool, config, handler, reconnectionConfig)
+            container = newContainer
+            newContainer.start()
+        }
     }
 
     /**
@@ -37,9 +43,11 @@ class RabbitConsumer<T> internal constructor(
      */
     @JvmOverloads
     fun stop(timeout: Duration = config.gracefulShutdownTimeout) {
-        if (running.compareAndSet(true, false)) {
-            container?.stop(timeout)
-            container = null
+        lifecycleLock.withLock {
+            if (running.compareAndSet(true, false)) {
+                container?.stop(timeout)
+                container = null
+            }
         }
     }
 

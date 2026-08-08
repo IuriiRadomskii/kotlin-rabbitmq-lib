@@ -1,6 +1,5 @@
 package org.radomskii.rabbit.integration
 
-import com.rabbitmq.client.Address
 import com.rabbitmq.client.ConnectionFactory
 import org.assertj.core.api.Assertions.assertThat
 import org.assertj.core.api.Assertions.assertThatThrownBy
@@ -23,9 +22,6 @@ import java.util.concurrent.ArrayBlockingQueue
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicInteger
 
-/**
- * End-to-end test exercising [RabbitMQClient] against a real broker started via Testcontainers.
- */
 @Testcontainers
 @Tag("integration")
 class RabbitClientIntegrationTest {
@@ -48,9 +44,10 @@ class RabbitClientIntegrationTest {
                     ConnectionFactory().apply {
                         username = rabbitContainer.adminUsername
                         password = rabbitContainer.adminPassword
+                        host = rabbitContainer.host
+                        port = rabbitContainer.amqpPort
                     }
                 )
-                .addresses(listOf(Address(rabbitContainer.host, rabbitContainer.amqpPort)))
                 .build()
         }
 
