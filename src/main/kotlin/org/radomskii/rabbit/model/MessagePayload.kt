@@ -1,9 +1,5 @@
 package org.radomskii.rabbit.model
 
-/**
- * Raw wire-level representation of a message: its serialized bytes together with
- * the content type and encoding needed to interpret them.
- */
 data class MessagePayload(
     val bytes: ByteArray,
     val contentType: String,

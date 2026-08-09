@@ -1,6 +1,5 @@
 package org.radomskii.rabbit
 
-import com.rabbitmq.client.Address
 import com.rabbitmq.client.ConnectionFactory
 import org.radomskii.rabbit.config.ConsumerConfig
 import org.radomskii.rabbit.config.PublisherConfig
@@ -12,11 +11,6 @@ import java.io.Closeable
 import java.util.concurrent.CopyOnWriteArrayList
 import java.util.concurrent.atomic.AtomicBoolean
 
-/**
- * Entry point for this library. Owns the underlying connection pool and creates publishers
- * and consumers that share it. Build one with [builder], create publishers/consumers from it,
- * and [close] it once when the application shuts down to release all network resources.
- */
 class RabbitMQClient private constructor(
     connectionFactory: ConnectionFactory,
     connectionCount: Int,
@@ -32,9 +26,6 @@ class RabbitMQClient private constructor(
         connectionPool.init()
     }
 
-    /**
-     * Create a new publisher sharing this client's connection pool.
-     */
     fun <T> createPublisher(config: PublisherConfig<T>): RabbitPublisher<T> {
         check(!closed.get()) { "RabbitMQClient is closed" }
         val publisher = RabbitPublisher(connectionPool, config)
@@ -42,10 +33,6 @@ class RabbitMQClient private constructor(
         return publisher
     }
 
-    /**
-     * Create a new consumer sharing this client's connection pool. Call [RabbitConsumer.start]
-     * to begin consuming.
-     */
     fun <T> createConsumer(config: ConsumerConfig<T>): RabbitConsumer<T> {
         check(!closed.get()) { "RabbitMQClient is closed" }
         val consumer = RabbitConsumer(connectionPool, config, reconnectionConfig)
@@ -53,10 +40,6 @@ class RabbitMQClient private constructor(
         return consumer
     }
 
-    /**
-     * Close every publisher and consumer created by this client (draining in-flight work first),
-     * then close all pooled connections. Idempotent.
-     */
     override fun close() {
         if (closed.compareAndSet(false, true)) {
             publishers.forEach { it.close() }
@@ -69,9 +52,6 @@ class RabbitMQClient private constructor(
         }
     }
 
-    /**
-     * Builds a [RabbitMQClient].
-     */
     class Builder {
         private var connectionFactory: ConnectionFactory? = null
         private var connectionCount: Int = 1

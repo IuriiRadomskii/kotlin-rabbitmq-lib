@@ -8,14 +8,6 @@ import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.locks.ReentrantLock
 import kotlin.concurrent.withLock
 
-/**
- * Consumes messages from the queues configured in [ConsumerConfig]. Not started until [start]
- * is called with a [MessageHandler]. Thread-safe: [start]/[stop]/[isRunning] may be called from
- * any thread, but a single instance can only be started once (create a new instance to restart
- * with a different handler).
- *
- * @param T type of the message payload
- */
 class RabbitConsumer<T> internal constructor(
     private val connectionPool: ConnectionPool,
     private val config: ConsumerConfig<T>,

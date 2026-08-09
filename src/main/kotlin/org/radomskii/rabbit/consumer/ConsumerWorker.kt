@@ -17,12 +17,6 @@ import java.util.concurrent.LinkedBlockingQueue
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
 
-/**
- * Consumes from a set of queues using one dedicated channel bound to one platform thread for
- * its entire lifecycle. Deliveries are handed off from the broker's callback thread to this
- * worker's own thread via a bounded [java.util.concurrent.BlockingQueue], where they are
- * deserialized, passed to the [MessageHandler] and acked/nacked/rejected synchronously.
- */
 internal class ConsumerWorker<T>(
     private val id: Int,
     private val channel: Channel,

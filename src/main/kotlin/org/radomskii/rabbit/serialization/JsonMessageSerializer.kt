@@ -5,12 +5,6 @@ import com.google.gson.reflect.TypeToken
 import org.radomskii.rabbit.model.MessagePayload
 import java.lang.reflect.Type
 
-/**
- * JSON-based [MessageSerializer] backed by Gson. Produces payloads with
- * content type `application/json` and `UTF-8` encoding.
- *
- * @param T type of the message payload
- */
 class JsonMessageSerializer<T>(
     private val type: Type,
     private val gson: Gson = Gson()
@@ -32,9 +26,6 @@ class JsonMessageSerializer<T>(
         private const val CONTENT_TYPE = "application/json"
         private const val CONTENT_ENCODING = "UTF-8"
 
-        /**
-         * Create a serializer for a (possibly generic) reified type, e.g. `JsonMessageSerializer.create<List<Foo>>()`.
-         */
         inline fun <reified T> create(gson: Gson = Gson()): JsonMessageSerializer<T> =
             JsonMessageSerializer(object : TypeToken<T>() {}.type, gson)
     }

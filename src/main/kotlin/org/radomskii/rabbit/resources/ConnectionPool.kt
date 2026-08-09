@@ -9,19 +9,6 @@ import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.locks.ReentrantLock
 import kotlin.concurrent.withLock
 
-/**
- * Pool of [ManagedConnection]s, distributed round-robin. Must be [init]ialized before
- * [nextConnection] can be used. Relies on the underlying RabbitMQ client's automatic
- * connection/channel recovery to survive network interruptions or broker restarts once open;
- * [init] itself retries per [ReconnectionConfig] to ride out a broker that is briefly
- * unavailable at application startup.
- *
- * @param connectionFactory configured by the caller (credentials, timeouts, heartbeat, etc.);
- *   must have automatic recovery enabled, since the pool relies on it for resilience
- * @param addresses broker addresses to connect to; when empty, connections are opened via
- *   [ConnectionFactory.newConnection] (no-arg), using the factory's own host/port
- * @param connectionCount number of physical connections to open and round-robin across
- */
 internal class ConnectionPool(
     private val connectionFactory: ConnectionFactory,
     private val connectionCount: Int = 1,
@@ -41,11 +28,6 @@ internal class ConnectionPool(
     private val roundRobin = AtomicInteger(0)// TODO instead of round-robin use balancing by number of channels per connection at any time number of channels per connection should be almost equal. If number of channels approaching to threshold value so throw warn log. threshold Connection#channelMax
     private lateinit var connections: List<ManagedConnection>
 
-    /**
-     * Open [connectionCount] connections, retrying per [ReconnectionConfig] when the broker is
-     * unavailable. Must be called once before [nextConnection] is used. Idempotent while the
-     * pool stays open; throws if called after [close].
-     */
     fun init() {
         lifecycleLock.withLock {
             check(!closed.get()) { "ConnectionPool is closed" }
@@ -93,9 +75,6 @@ internal class ConnectionPool(
         )
     }
 
-    /**
-     * Return the next connection in round-robin order, skipping any that are currently closed.
-     */
     fun nextConnection(): ManagedConnection {
         if (closed.get()) throw RabbitConnectionException("ConnectionPool is closed")
         if (!initialized.get()) throw RabbitConnectionException("ConnectionPool is not initialized")

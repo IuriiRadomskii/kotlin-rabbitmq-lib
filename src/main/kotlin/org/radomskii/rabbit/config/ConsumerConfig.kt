@@ -3,18 +3,6 @@ package org.radomskii.rabbit.config
 import org.radomskii.rabbit.serialization.MessageSerializer
 import java.time.Duration
 
-/**
- * Configuration for a [org.radomskii.rabbit.consumer.RabbitConsumer].
- *
- * @param queues queues consumed from at startup
- * @param deserializer converts wire bytes back into the consumer's payload type
- * @param workerPoolSize number of dedicated worker threads (and channels), one per thread
- * @param prefetchCount QoS prefetch count applied to each worker's channel
- * @param autoAck whether messages are acknowledged automatically by the broker on delivery
- * @param queueCapacity capacity of the handoff queue between the broker delivery callback and a worker thread
- * @param gracefulShutdownTimeout maximum time [org.radomskii.rabbit.consumer.RabbitConsumer.stop] waits for in-flight handler calls to finish
- * @param supervisorPollInterval how often the supervisor checks worker health
- */
 data class ConsumerConfig<T>(
     val queues: List<String>,
     val deserializer: MessageSerializer<T>,

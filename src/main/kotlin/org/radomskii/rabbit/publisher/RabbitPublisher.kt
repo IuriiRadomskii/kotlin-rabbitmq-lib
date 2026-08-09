@@ -15,13 +15,6 @@ import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.atomic.AtomicReference
 
-/**
- * Publishes messages to RabbitMQ. Thread-safe: a single instance may be used concurrently
- * from multiple threads. Each [publish] call is synchronous: it opens a fresh channel,
- * publishes on the calling thread, and closes the channel before returning.
- *
- * @param T type of the message payload
- */
 class RabbitPublisher<T> internal constructor(
     private val connectionPool: ConnectionPool,
     private val config: PublisherConfig<T>
@@ -30,15 +23,6 @@ class RabbitPublisher<T> internal constructor(
     private val inFlight = AtomicInteger(0)
     private val closeLock = Object()
 
-    /**
-     * Publish [payload] to [exchange] with [routingKey]. Synchronous - returns once the broker
-     * has accepted the publication task (and, when [PublisherConfig.mandatory] is set, once routability
-     * has been confirmed or [PublisherConfig.returnListenerTimeout] has elapsed).
-     *
-     * @throws IllegalStateException if this publisher has been [close]d
-     * @throws MessageReturnedException if the message was mandatory and unroutable
-     * @throws RabbitPublishException if the message could not be published due to a connection/channel/broker failure
-     */
     fun publish(exchange: String, routingKey: String, payload: T, metadata: MessageMetadata = MessageMetadata()) {
         inFlight.incrementAndGet()
         try {
@@ -83,11 +67,6 @@ class RabbitPublisher<T> internal constructor(
         }
     }
 
-    /**
-     * Marks this publisher as closed - subsequent [publish] calls throw [IllegalStateException] -
-     * then waits, bounded by [PublisherConfig.closeTimeout], for publishes already in flight to finish.
-     * Idempotent.
-     */
     fun close() {
         if (closed.compareAndSet(false, true)) {
             val deadlineNanos = System.nanoTime() + config.closeTimeout.toNanos()
@@ -101,9 +80,6 @@ class RabbitPublisher<T> internal constructor(
         }
     }
 
-    /**
-     * Whether [close] has been called on this publisher.
-     */
     fun isClosed(): Boolean = closed.get()
 
     private fun publishMandatory(
