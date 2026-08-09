@@ -1,9 +1,13 @@
 package org.radomskii.rabbit.resources
 
-import com.rabbitmq.client.Connection
 import com.rabbitmq.client.ConnectionFactory
 import org.radomskii.rabbit.config.ReconnectionConfig
 import org.slf4j.LoggerFactory
+import java.util.concurrent.CopyOnWriteArrayList
+import java.util.concurrent.Executors
+import java.util.concurrent.ScheduledExecutorService
+import java.util.concurrent.ScheduledFuture
+import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.locks.ReentrantLock
@@ -25,64 +29,37 @@ internal class ConnectionPool(
     private val lifecycleLock = ReentrantLock()
     private val initialized = AtomicBoolean(false)
     private val closed = AtomicBoolean(false)
-    private val roundRobin =
-        AtomicInteger(0)// TODO instead of round-robin use balancing by number of channels per connection at any time number of channels per connection should be almost equal. If number of channels approaching to threshold value so throw warn log. threshold Connection#channelMax
-    private lateinit var connections: List<ManagedConnection>
+    private val scalingInProgress = AtomicBoolean(false)
+    private val roundRobin = AtomicInteger(0)
+    private val connections = CopyOnWriteArrayList<ManagedConnection>()
+    private val scalingScheduler: ScheduledExecutorService =
+        Executors.newSingleThreadScheduledExecutor(Thread.ofVirtual().factory())
+    private val connectionRetryScheduler: ScheduledExecutorService =
+        Executors.newSingleThreadScheduledExecutor(Thread.ofVirtual().factory())
+    private var capacitySupervisorTask: ScheduledFuture<*>? = null
 
     fun init() {
         lifecycleLock.withLock {
             check(!closed.get()) { "ConnectionPool is closed" }
-            if (initialized.get()) return
+            if (!initialized.compareAndSet(false, true)) return
 
-            //TODO no need to create connections eagerly. create new connection if number of channels per connection is about 75% of Connection#channelMax
-            val opened = mutableListOf<ManagedConnection>()
-            try {
-                repeat(connectionCount) {
-                    opened.add(ManagedConnection(connectWithRetry()))
-                }
-            } catch (e: Exception) {
-                opened.forEach { it.close() }
-                throw e
-            }
-            connections = opened
-            initialized.set(true)
-        }
-    }
+            scheduleConnectionAttempt(attempt = 1, onSuccess = { connections.add(it) })
 
-    private fun connectWithRetry(): Connection {
-        var lastError: Exception? = null
-        repeat(reconnectionConfig.maxAttempts) { attempt ->
-            try {
-                return connectionFactory.newConnection()
-            } catch (e: Exception) {
-                lastError = e
-                log.warn(
-                    "Failed to open RabbitMQ connection (attempt {}/{})",
-                    attempt + 1, reconnectionConfig.maxAttempts, e
-                )
-                if (attempt < reconnectionConfig.maxAttempts - 1) {
-                    try {
-                        Thread.sleep(reconnectionConfig.retryInterval.toMillis())
-                    } catch (ie: InterruptedException) {
-                        Thread.currentThread().interrupt()
-                        throw RabbitConnectionException("Interrupted while retrying RabbitMQ connection", ie)
-                    }
-                }
-            }
+            val pollMillis = reconnectionConfig.retryInterval.toMillis()
+            capacitySupervisorTask = scalingScheduler.scheduleWithFixedDelay(
+                ::triggerScaleUpIfNearCapacity, pollMillis, pollMillis, TimeUnit.MILLISECONDS
+            )
         }
-        throw RabbitConnectionException(
-            "Failed to open RabbitMQ connection after ${reconnectionConfig.maxAttempts} attempts",
-            lastError
-        )
     }
 
     fun nextConnection(): ManagedConnection {
         if (closed.get()) throw RabbitConnectionException("ConnectionPool is closed")
         if (!initialized.get()) throw RabbitConnectionException("ConnectionPool is not initialized")
 
+        val snapshot = connections.toList()
         val start = roundRobin.getAndIncrement()
-        for (offset in connections.indices) {
-            val candidate = connections[(start + offset).mod(connections.size)]
+        for (offset in snapshot.indices) {
+            val candidate = snapshot[(start + offset).mod(snapshot.size)]
             if (candidate.isOpen) return candidate
         }
         throw RabbitConnectionException("No open connections available")
@@ -90,13 +67,85 @@ internal class ConnectionPool(
 
     fun close() {
         lifecycleLock.withLock {
-            if (closed.compareAndSet(false, true) && ::connections.isInitialized) {
+            if (closed.compareAndSet(false, true)) {
+                capacitySupervisorTask?.cancel(false)
+                scalingScheduler.shutdown()
+                connectionRetryScheduler.shutdown()
+                try {
+                    scalingScheduler.awaitTermination(SCHEDULER_SHUTDOWN_MILLIS, TimeUnit.MILLISECONDS)
+                    connectionRetryScheduler.awaitTermination(SCHEDULER_SHUTDOWN_MILLIS, TimeUnit.MILLISECONDS)
+                } catch (e: InterruptedException) {
+                    Thread.currentThread().interrupt()
+                }
                 connections.forEach { it.close() }
+                connections.clear()
             }
         }
     }
 
+    private fun scheduleConnectionAttempt(
+        attempt: Int,
+        onSuccess: (ManagedConnection) -> Unit,
+        onDone: () -> Unit = {}
+    ) {
+        connectionRetryScheduler.execute {
+            if (closed.get()) {
+                onDone()
+                return@execute
+            }
+            try {
+                val connection = ManagedConnection(connectionFactory.newConnection())
+                if (closed.get()) {
+                    connection.close()
+                } else {
+                    onSuccess(connection)
+                }
+                onDone()
+            } catch (e: Exception) {
+                log.warn(
+                    "Failed to open RabbitMQ connection (attempt {}/{})",
+                    attempt, reconnectionConfig.maxAttempts, e
+                )
+                if (attempt < reconnectionConfig.maxAttempts) {
+                    connectionRetryScheduler.schedule(
+                        { scheduleConnectionAttempt(attempt + 1, onSuccess, onDone) },
+                        reconnectionConfig.retryInterval.toMillis(),
+                        TimeUnit.MILLISECONDS
+                    )
+                } else {
+                    log.warn(
+                        "Giving up opening a RabbitMQ connection after {} attempts",
+                        reconnectionConfig.maxAttempts
+                    )
+                    onDone()
+                }
+            }
+        }
+    }
+
+    private fun triggerScaleUpIfNearCapacity() {
+        if (closed.get()) return
+        if (connections.size >= connectionCount) return
+        if (connections.none { it.isOpen && isNearChannelCapacity(it) }) return
+        if (!scalingInProgress.compareAndSet(false, true)) return
+
+        scheduleConnectionAttempt(
+            attempt = 1,
+            onSuccess = { connections.add(it) },
+            onDone = { scalingInProgress.set(false) }
+        )
+    }
+
+    private fun isNearChannelCapacity(connection: ManagedConnection): Boolean {
+        val channelMax = connection.channelMax
+        if (channelMax <= 0) return false
+        return connection.channelCount >= channelMax * SCALE_UP_THRESHOLD_RATIO
+    }
+
     private companion object {
         val log = LoggerFactory.getLogger(ConnectionPool::class.java)
+        const val SCALE_UP_THRESHOLD_RATIO = 0.75
+        const val SCHEDULER_SHUTDOWN_MILLIS = 2_000L
     }
+
 }
