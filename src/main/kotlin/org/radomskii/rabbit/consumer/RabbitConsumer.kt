@@ -17,9 +17,6 @@ class RabbitConsumer<T> internal constructor(
     private val running = AtomicBoolean(false)
     private var container: ConsumerWorkerContainer<T>? = null
 
-    /**
-     * Start consuming, dispatching each received message to [handler] on a dedicated worker thread.
-     */
     fun start(handler: MessageHandler<T>) {
         lifecycleLock.withLock {
             check(running.compareAndSet(false, true)) { "RabbitConsumer already started" }
@@ -29,10 +26,6 @@ class RabbitConsumer<T> internal constructor(
         }
     }
 
-    /**
-     * Stop consuming, waiting up to [timeout] for in-flight [MessageHandler] invocations to
-     * finish before closing worker channels. Idempotent.
-     */
     @JvmOverloads
     fun stop(timeout: Duration = config.gracefulShutdownTimeout) {
         lifecycleLock.withLock {

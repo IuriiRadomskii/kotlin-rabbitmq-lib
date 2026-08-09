@@ -42,8 +42,6 @@ class RabbitMQClient private constructor(
 
     override fun close() {
         if (closed.compareAndSet(false, true)) {
-            publishers.forEach { it.close() }
-            publishers.clear()
 
             consumers.forEach { if (it.isRunning()) it.stop() }
             consumers.clear()

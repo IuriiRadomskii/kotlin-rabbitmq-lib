@@ -18,14 +18,15 @@ internal class ConnectionPool(
         require(connectionCount > 0) { "connectionCount must be positive" }
         require(connectionFactory.isAutomaticRecoveryEnabled) {
             "connectionFactory must have automatic recovery enabled (isAutomaticRecoveryEnabled = true) - " +
-                "ConnectionPool relies on it to survive network interruptions and broker restarts"
+                    "ConnectionPool relies on it to survive network interruptions and broker restarts"
         }
     }
 
     private val lifecycleLock = ReentrantLock()
     private val initialized = AtomicBoolean(false)
     private val closed = AtomicBoolean(false)
-    private val roundRobin = AtomicInteger(0)// TODO instead of round-robin use balancing by number of channels per connection at any time number of channels per connection should be almost equal. If number of channels approaching to threshold value so throw warn log. threshold Connection#channelMax
+    private val roundRobin =
+        AtomicInteger(0)// TODO instead of round-robin use balancing by number of channels per connection at any time number of channels per connection should be almost equal. If number of channels approaching to threshold value so throw warn log. threshold Connection#channelMax
     private lateinit var connections: List<ManagedConnection>
 
     fun init() {

@@ -30,10 +30,4 @@ class PublisherConfigTest {
         }.isInstanceOf(IllegalArgumentException::class.java)
     }
 
-    @Test
-    fun shouldDefaultMandatoryToFalse() {
-        val config = PublisherConfig(serializer = serializer)
-
-        assertThat(config.mandatory).isFalse()
-    }
 }

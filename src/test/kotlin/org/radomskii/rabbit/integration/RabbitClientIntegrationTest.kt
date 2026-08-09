@@ -101,7 +101,6 @@ class RabbitClientIntegrationTest {
             assertThat(message).isEqualTo(SampleEvent(1, "hello"))
         } finally {
             consumer.stop()
-            publisher.close()
         }
     }
 
@@ -110,18 +109,13 @@ class RabbitClientIntegrationTest {
         val publisher = client.createPublisher(
             PublisherConfig(
                 serializer = JsonMessageSerializer.create<SampleEvent>(),
-                mandatory = true,
                 returnListenerTimeout = Duration.ofSeconds(5)
             )
         )
 
-        try {
-            assertThatThrownBy {
-                publisher.publish("", "no.such.queue.${System.nanoTime()}", SampleEvent(2, "lost"))
-            }.isInstanceOf(MessageReturnedException::class.java)
-        } finally {
-            publisher.close()
-        }
+        assertThatThrownBy {
+            publisher.publish("", "no.such.queue.${System.nanoTime()}", SampleEvent(2, "lost"))
+        }.isInstanceOf(MessageReturnedException::class.java)
     }
 
     @Test
@@ -157,7 +151,6 @@ class RabbitClientIntegrationTest {
             assertThat(attempts.get()).isGreaterThanOrEqualTo(2)
         } finally {
             consumer.stop()
-            publisher.close()
         }
     }
 }

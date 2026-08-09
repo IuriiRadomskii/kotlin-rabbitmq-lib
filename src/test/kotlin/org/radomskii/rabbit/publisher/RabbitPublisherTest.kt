@@ -1,15 +1,9 @@
 package org.radomskii.rabbit.publisher
 
-import com.rabbitmq.client.AMQP
 import com.rabbitmq.client.Channel
-import com.rabbitmq.client.Return
-import com.rabbitmq.client.ReturnCallback
-import com.rabbitmq.client.ReturnListener
-import org.assertj.core.api.Assertions.assertThat
 import org.assertj.core.api.Assertions.assertThatThrownBy
 import org.junit.jupiter.api.Test
 import org.mockito.kotlin.any
-import org.mockito.kotlin.argumentCaptor
 import org.mockito.kotlin.eq
 import org.mockito.kotlin.mock
 import org.mockito.kotlin.verify
@@ -34,7 +28,7 @@ class RabbitPublisherTest {
         val rawChannel: Channel
     )
 
-    private fun fixture(mandatory: Boolean = false, returnListenerTimeout: Duration = Duration.ofMillis(200)): Fixture {
+    private fun fixture(returnListenerTimeout: Duration = Duration.ofMillis(200)): Fixture {
         val rawChannel = mock<Channel>()
         whenever(rawChannel.isOpen).thenReturn(true)
         val managedConnection = mock<ManagedConnection>()
@@ -44,7 +38,6 @@ class RabbitPublisherTest {
 
         val config = PublisherConfig(
             serializer = serializer,
-            mandatory = mandatory,
             returnListenerTimeout = returnListenerTimeout
         )
         return Fixture(RabbitPublisher(connectionPool, config), rawChannel)
@@ -72,75 +65,4 @@ class RabbitPublisherTest {
         verify(rawChannel).close()
     }
 
-    @Test
-    fun shouldThrowMessageReturnedExceptionWhenMandatoryPublishIsReturned() {
-        val (publisher, rawChannel) = fixture(mandatory = true)
-        val listener = mock<ReturnListener>()
-        val callbackCaptor = argumentCaptor<ReturnCallback>()
-        whenever(rawChannel.addReturnListener(callbackCaptor.capture())).thenReturn(listener)
-        whenever(rawChannel.basicPublish(any(), any(), eq(true), any(), any())).thenAnswer {
-            val returned = Return(312, "NO_ROUTE", "ex", "key", mock<AMQP.BasicProperties>(), ByteArray(0))
-            callbackCaptor.firstValue.handle(returned)
-            null
-        }
-
-        assertThatThrownBy { publisher.publish("ex", "key", "hi") }
-            .isInstanceOf(MessageReturnedException::class.java)
-
-        verify(rawChannel).removeReturnListener(listener)
-        verify(rawChannel).close()
-    }
-
-    @Test
-    fun shouldNotThrowWhenMandatoryPublishRoutesSuccessfully() {
-        val (publisher, rawChannel) = fixture(mandatory = true)
-        whenever(rawChannel.addReturnListener(any<ReturnCallback>())).thenReturn(mock())
-
-        publisher.publish("ex", "key", "hi")
-
-        verify(rawChannel).basicPublish(eq("ex"), eq("key"), eq(true), any(), any())
-    }
-
-    @Test
-    fun shouldRejectPublishAfterClose() {
-        val (publisher, _) = fixture()
-        publisher.close()
-
-        assertThatThrownBy { publisher.publish("ex", "key", "hi") }
-            .isInstanceOf(IllegalStateException::class.java)
-
-        assertThat(publisher.isClosed()).isTrue()
-    }
-
-    @Test
-    fun shouldWaitForInFlightPublishesBeforeCloseReturns() {
-        val rawChannel = mock<Channel>()
-        whenever(rawChannel.isOpen).thenReturn(true)
-        val managedConnection = mock<ManagedConnection>()
-        val releaseGate = java.util.concurrent.CountDownLatch(1)
-        whenever(rawChannel.basicPublish(any(), any(), any<Boolean>(), any(), any())).thenAnswer {
-            releaseGate.await()
-            null
-        }
-        whenever(managedConnection.createChannel()).thenReturn(rawChannel)
-        val connectionPool = mock<ConnectionPool>()
-        whenever(connectionPool.nextConnection()).thenReturn(managedConnection)
-        val config = PublisherConfig(serializer = serializer, closeTimeout = Duration.ofSeconds(5))
-        val publisher = RabbitPublisher(connectionPool, config)
-
-        val publishThread = Thread { publisher.publish("ex", "key", "hi") }
-        publishThread.start()
-        Thread.sleep(50)
-
-        val closeThread = Thread { publisher.close() }
-        closeThread.start()
-        Thread.sleep(50)
-        assertThat(closeThread.isAlive).isTrue()
-
-        releaseGate.countDown()
-        publishThread.join(1000)
-        closeThread.join(1000)
-
-        assertThat(closeThread.isAlive).isFalse()
-    }
 }

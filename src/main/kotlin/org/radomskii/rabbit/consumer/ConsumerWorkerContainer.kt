@@ -22,9 +22,14 @@ internal class ConsumerWorkerContainer<T>(
     private val scheduler = Executors.newSingleThreadScheduledExecutor(Thread.ofVirtual().factory())
     private var supervisorTask: ScheduledFuture<*>? = null
 
+    private companion object {
+        val log = LoggerFactory.getLogger(ConsumerWorkerContainer::class.java)
+        const val SCHEDULER_SHUTDOWN_MILLIS = 2_000L
+        const val SHUTDOWN_GRACE_MILLIS = 2_000L
+    }
+
     fun start() {
         check(running.compareAndSet(false, true)) { "ConsumerWorkerContainer already started" }
-
         try {
             repeat(config.workerPoolSize) { workerId ->
                 workers.add(createAndStartWorkerWithRetry(workerId))
@@ -33,7 +38,7 @@ internal class ConsumerWorkerContainer<T>(
             workers.forEach { it.forceClose() }
             workers.clear()
             running.set(false)
-            throw if (e is RabbitConsumerException) e else RabbitConsumerException("Failed to start consumer workers", e)
+            throw e as? RabbitConsumerException ?: RabbitConsumerException("Failed to start consumer workers", e)
         }
 
         val pollIntervalMillis = config.supervisorPollInterval.toMillis()
@@ -130,9 +135,4 @@ internal class ConsumerWorkerContainer<T>(
         workers.clear()
     }
 
-    private companion object {
-        val log = LoggerFactory.getLogger(ConsumerWorkerContainer::class.java)
-        const val SCHEDULER_SHUTDOWN_MILLIS = 2_000L
-        const val SHUTDOWN_GRACE_MILLIS = 2_000L
-    }
 }

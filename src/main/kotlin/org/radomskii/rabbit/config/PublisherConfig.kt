@@ -5,7 +5,6 @@ import java.time.Duration
 
 data class PublisherConfig<T>(
     val serializer: MessageSerializer<T>,
-    val mandatory: Boolean = false,
     val returnListenerTimeout: Duration = Duration.ofSeconds(5),
     val closeTimeout: Duration = Duration.ofSeconds(10)
 ) {
