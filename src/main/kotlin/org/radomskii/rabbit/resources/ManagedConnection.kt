@@ -61,7 +61,7 @@ internal class ManagedConnection(
 
     private fun isCloseMethod(name: String) = name == "close" || name == "abort"
 
-    override fun toString(): String = "ManagedConnection(id=$id, isOpen=$isOpen, channels=$channelCount)"
+    override fun toString(): String = "ManagedConnection(id=$id, isOpen=$isOpen, channels=$channelCount, address = ${delegate.address})"
 
     private companion object {
         val EMPTY_ARGS = emptyArray<Any?>()

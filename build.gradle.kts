@@ -21,10 +21,11 @@ dependencies {
 
     testImplementation(kotlin("test"))
     testImplementation("org.junit.jupiter:junit-jupiter:5.10.1")
+    testImplementation("org.awaitility:awaitility-kotlin:3.1.2")
 
     // Mocking
     testImplementation("org.mockito:mockito-core:5.14.2")
-    testImplementation("org.mockito:mockito-junit-jupiter:5.14.2")
+    testImplementation(platform("org.junit:junit-bom:5.14.2"))
     testImplementation("org.mockito.kotlin:mockito-kotlin:5.4.0")
 
     // TestContainers

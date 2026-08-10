@@ -42,9 +42,7 @@ internal class ConnectionPool(
         lifecycleLock.withLock {
             check(!closed.get()) { "ConnectionPool is closed" }
             if (!initialized.compareAndSet(false, true)) return
-
-            scheduleConnectionAttempt(attempt = 1, onSuccess = { connections.add(it) })
-
+            scheduleConnectionAttempt(numberOfAttempt = 1, onSuccess = { connections.add(it) })
             val pollMillis = reconnectionConfig.retryInterval.toMillis()
             capacitySupervisorTask = scalingScheduler.scheduleWithFixedDelay(
                 ::triggerScaleUpIfNearCapacity, pollMillis, pollMillis, TimeUnit.MILLISECONDS
@@ -84,10 +82,11 @@ internal class ConnectionPool(
     }
 
     private fun scheduleConnectionAttempt(
-        attempt: Int,
+        numberOfAttempt: Int,
         onSuccess: (ManagedConnection) -> Unit,
         onDone: () -> Unit = {}
     ) {
+        log.trace("Schedule connection task: attempts = $numberOfAttempt")
         connectionRetryScheduler.execute {
             if (closed.get()) {
                 onDone()
@@ -98,17 +97,18 @@ internal class ConnectionPool(
                 if (closed.get()) {
                     connection.close()
                 } else {
+                    log.trace("Connection created: {}", connection)
                     onSuccess(connection)
                 }
                 onDone()
             } catch (e: Exception) {
                 log.warn(
                     "Failed to open RabbitMQ connection (attempt {}/{})",
-                    attempt, reconnectionConfig.maxAttempts, e
+                    numberOfAttempt, reconnectionConfig.maxAttempts, e
                 )
-                if (attempt < reconnectionConfig.maxAttempts) {
+                if (numberOfAttempt < reconnectionConfig.maxAttempts) {
                     connectionRetryScheduler.schedule(
-                        { scheduleConnectionAttempt(attempt + 1, onSuccess, onDone) },
+                        { scheduleConnectionAttempt(numberOfAttempt + 1, onSuccess, onDone) },
                         reconnectionConfig.retryInterval.toMillis(),
                         TimeUnit.MILLISECONDS
                     )
@@ -129,8 +129,9 @@ internal class ConnectionPool(
         if (connections.none { it.isOpen && isNearChannelCapacity(it) }) return
         if (!scalingInProgress.compareAndSet(false, true)) return
 
+        log.trace("Scaling up connections")
         scheduleConnectionAttempt(
-            attempt = 1,
+            numberOfAttempt = 1,
             onSuccess = { connections.add(it) },
             onDone = { scalingInProgress.set(false) }
         )
@@ -138,7 +139,7 @@ internal class ConnectionPool(
 
     private fun isNearChannelCapacity(connection: ManagedConnection): Boolean {
         val channelMax = connection.channelMax
-        if (channelMax <= 0) return false
+        if (channelMax == 0) return false
         return connection.channelCount >= channelMax * SCALE_UP_THRESHOLD_RATIO
     }
 

@@ -5,6 +5,10 @@ import com.rabbitmq.client.Connection
 import com.rabbitmq.client.ConnectionFactory
 import org.assertj.core.api.Assertions.assertThat
 import org.assertj.core.api.Assertions.assertThatThrownBy
+import org.awaitility.kotlin.await
+import org.awaitility.kotlin.matches
+import org.awaitility.kotlin.until
+import org.awaitility.kotlin.untilCallTo
 import org.junit.jupiter.api.Test
 import org.mockito.kotlin.after
 import org.mockito.kotlin.mock
@@ -14,6 +18,8 @@ import org.mockito.kotlin.verify
 import org.mockito.kotlin.whenever
 import org.radomskii.rabbit.config.ReconnectionConfig
 import java.time.Duration
+import java.util.concurrent.Executors
+import java.util.concurrent.TimeUnit
 
 class ConnectionPoolTest {
 
@@ -24,28 +30,21 @@ class ConnectionPoolTest {
         whenever(isAutomaticRecoveryEnabled).thenReturn(true)
     }
 
-    private fun awaitConnection(pool: ConnectionPool, timeoutMillis: Long = 2_000): ManagedConnection {
-        val deadline = System.currentTimeMillis() + timeoutMillis
-        var lastError: RabbitConnectionException? = null
-        while (System.currentTimeMillis() < deadline) {
+    private fun awaitConnection(pool: ConnectionPool, timeoutSeconds: Long = 2): ManagedConnection {
+        val connection = await.atMost(timeoutSeconds, TimeUnit.SECONDS) untilCallTo {
             try {
-                return pool.nextConnection()
+                pool.nextConnection()
             } catch (e: RabbitConnectionException) {
-                lastError = e
-                Thread.sleep(10)
+                null
             }
-        }
-        throw lastError ?: AssertionError("No connection became available within ${timeoutMillis}ms")
+        } matches { it != null }
+        return connection!!
     }
 
-    private fun awaitDistinctConnectionCount(pool: ConnectionPool, expected: Int, timeoutMillis: Long = 2_000) {
-        val deadline = System.currentTimeMillis() + timeoutMillis
-        while (System.currentTimeMillis() < deadline) {
-            val ids = (1..expected * 4).map { pool.nextConnection().id }.distinct()
-            if (ids.size >= expected) return
-            Thread.sleep(10)
+    private fun awaitDistinctConnectionCount(pool: ConnectionPool, expected: Int, timeoutSeconds: Long = 2) {
+        await.atMost(timeoutSeconds, TimeUnit.SECONDS) until {
+            (1..expected * 4).map { pool.nextConnection().id }.distinct().size >= expected
         }
-        throw AssertionError("Pool never reached $expected distinct connections within ${timeoutMillis}ms")
     }
 
     @Test
@@ -70,7 +69,7 @@ class ConnectionPoolTest {
         var attempts = 0
         whenever(factory.newConnection()).thenAnswer {
             attempts++
-            if (attempts < 3) throw RuntimeException("boom") else rawConnection
+            if (attempts < 3) throw RuntimeException("Connection is unavailable") else rawConnection
         }
         val pool = ConnectionPool(factory, reconnectionConfig = fastReconnectionConfig(maxAttempts = 3))
 
@@ -83,34 +82,37 @@ class ConnectionPoolTest {
     @Test
     fun shouldGiveUpOpeningFirstConnectionAfterExhaustingReconnectionAttempts() {
         val factory = mockFactory()
-        var attempts = 0
+        var actualAttempts = 0
+        var expectedAttempts = 2
         val failure = RuntimeException("boom")
         whenever(factory.newConnection()).thenAnswer {
-            attempts++
+            actualAttempts++
             throw failure
         }
-        val pool = ConnectionPool(factory, reconnectionConfig = fastReconnectionConfig(maxAttempts = 2))
+        val pool = ConnectionPool(factory, reconnectionConfig = fastReconnectionConfig(expectedAttempts))
 
         pool.init()
 
         verify(factory, timeout(2_000).times(2)).newConnection()
-        assertThat(attempts).isEqualTo(2)
+        assertThat(actualAttempts).isEqualTo(expectedAttempts)
         assertThatThrownBy { pool.nextConnection() }
             .isInstanceOf(RabbitConnectionException::class.java)
     }
 
     @Test
-    fun shouldBeIdempotentWhenInitCalledTwice() {
+    fun shouldBeIdempotentWhenInitCalledConcurrently() {
         val rawConnection = mock<Connection>()
         whenever(rawConnection.isOpen).thenReturn(true)
         val factory = mockFactory()
         whenever(factory.newConnection()).thenReturn(rawConnection)
         val pool = ConnectionPool(factory)
-        pool.init()
+        Executors.newFixedThreadPool(10).use { executor ->
+            val futures = List(10) {
+                executor.submit { pool.init() }
+            }
+            futures.forEach { it.get() }
+        }
         awaitConnection(pool)
-
-        pool.init()
-
         verify(factory, after(300).times(1)).newConnection()
     }
 
@@ -134,7 +136,7 @@ class ConnectionPoolTest {
         val first = awaitConnection(pool)
         val second = pool.nextConnection()
 
-        assertThat(second).isSameAs(first)
+        assertThat(second).isEqualTo(first)
         verify(factory, times(1)).newConnection()
     }
 

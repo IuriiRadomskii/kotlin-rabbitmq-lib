@@ -5,9 +5,9 @@
         </encoder>
     </appender>
 
-    <root level="WARN">
+    <root level="INFO">
         <appender-ref ref="STDOUT" />
     </root>
 
-    <logger name="org.radomskii.rabbit" level="INFO" />
+    <logger name="org.radomskii.rabbit" level="TRACE" />
 </configuration>
