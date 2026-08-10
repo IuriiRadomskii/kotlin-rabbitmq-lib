@@ -12,9 +12,14 @@ import java.util.concurrent.atomic.AtomicInteger
 internal class ManagedConnection(
     private val delegate: Connection
 ) {
-    val id: String = UUID.randomUUID().toString()
+    val id: String
     private val closed = AtomicBoolean(false)
     private val openChannelCount = AtomicInteger(0)
+
+    init {
+        delegate.id = delegate.id ?: UUID.randomUUID().toString()
+        id = delegate.id
+    }
 
     val isOpen: Boolean
         get() = !closed.get() && delegate.isOpen

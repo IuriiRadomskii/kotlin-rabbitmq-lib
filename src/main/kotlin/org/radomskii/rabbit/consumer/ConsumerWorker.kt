@@ -53,6 +53,19 @@ internal class ConsumerWorker<T>(
         thread.start()
     }
 
+    fun stop(timeout: Duration) {
+        running.set(false)
+        consumerTags.forEach { tag -> runCatching { channel.basicCancel(tag) } }
+        if (thread.isAlive) {
+            thread.join(timeout.toMillis())
+        }
+        forceClose()
+    }
+
+    fun forceClose() {
+        runCatching { if (channel.isOpen) channel.close() }
+    }
+
     private fun runMainLoop() {
         try {
             while (running.get()) {
@@ -108,26 +121,6 @@ internal class ConsumerWorker<T>(
             is ConsumeResult.Nack -> channel.basicNack(deliveryTag, false, result.requeue)
             is ConsumeResult.Reject -> channel.basicReject(deliveryTag, result.requeue)
         }
-    }
-
-    /**
-     * Stop consuming and wait up to [timeout] for the current delivery (if any) to finish
-     * processing, then close the channel.
-     */
-    fun stop(timeout: Duration) {
-        running.set(false)
-        consumerTags.forEach { tag -> runCatching { channel.basicCancel(tag) } }
-        if (thread.isAlive) {
-            thread.join(timeout.toMillis())
-        }
-        runCatching { if (channel.isOpen) channel.close() }
-    }
-
-    /**
-     * Close the channel without waiting - used when replacing a dead worker.
-     */
-    fun forceClose() {
-        runCatching { if (channel.isOpen) channel.close() }
     }
 
     private companion object {
