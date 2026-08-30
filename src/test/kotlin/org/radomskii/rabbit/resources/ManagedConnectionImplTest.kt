@@ -10,7 +10,7 @@ import org.mockito.kotlin.times
 import org.mockito.kotlin.verify
 import org.mockito.kotlin.whenever
 
-class ManagedConnectionTest {
+class ManagedConnectionImplTest {
 
     @Test
     fun shouldCreateChannelDelegatingCallsToUnderlyingChannel() {
@@ -19,9 +19,9 @@ class ManagedConnectionTest {
         whenever(rawConnection.isOpen).thenReturn(true)
         whenever(rawConnection.createChannel()).thenReturn(rawChannel)
         whenever(rawChannel.isOpen).thenReturn(true)
-        val managedConnection = ManagedConnection(rawConnection)
+        val managedConnectionImpl = ManagedConnectionImpl(rawConnection)
 
-        val channel = managedConnection.createChannel()
+        val channel = managedConnectionImpl.createChannel()
 
         assertThat(channel.isOpen).isTrue()
         verify(rawChannel).isOpen
@@ -32,12 +32,12 @@ class ManagedConnectionTest {
         val rawConnection = mock<Connection>()
         whenever(rawConnection.isOpen).thenReturn(true)
         whenever(rawConnection.createChannel()).thenReturn(mock(), mock())
-        val managedConnection = ManagedConnection(rawConnection)
+        val managedConnectionImpl = ManagedConnectionImpl(rawConnection)
 
-        managedConnection.createChannel()
-        managedConnection.createChannel()
+        managedConnectionImpl.createChannel()
+        managedConnectionImpl.createChannel()
 
-        assertThat(managedConnection.channelCount).isEqualTo(2)
+        assertThat(managedConnectionImpl.channelCount).isEqualTo(2)
     }
 
     @Test
@@ -46,12 +46,12 @@ class ManagedConnectionTest {
         val rawChannel = mock<Channel>()
         whenever(rawConnection.isOpen).thenReturn(true)
         whenever(rawConnection.createChannel()).thenReturn(rawChannel)
-        val managedConnection = ManagedConnection(rawConnection)
-        val channel = managedConnection.createChannel()
+        val managedConnectionImpl = ManagedConnectionImpl(rawConnection)
+        val channel = managedConnectionImpl.createChannel()
 
         channel.close()
 
-        assertThat(managedConnection.channelCount).isZero()
+        assertThat(managedConnectionImpl.channelCount).isZero()
         verify(rawChannel).close()
     }
 
@@ -61,13 +61,13 @@ class ManagedConnectionTest {
         val rawChannel = mock<Channel>()
         whenever(rawConnection.isOpen).thenReturn(true)
         whenever(rawConnection.createChannel()).thenReturn(rawChannel)
-        val managedConnection = ManagedConnection(rawConnection)
-        val channel = managedConnection.createChannel()
+        val managedConnectionImpl = ManagedConnectionImpl(rawConnection)
+        val channel = managedConnectionImpl.createChannel()
 
         channel.close()
         channel.close()
 
-        assertThat(managedConnection.channelCount).isZero()
+        assertThat(managedConnectionImpl.channelCount).isZero()
         verify(rawChannel, times(2)).close()
     }
 
@@ -77,12 +77,12 @@ class ManagedConnectionTest {
         val rawChannel = mock<Channel>()
         whenever(rawConnection.isOpen).thenReturn(true)
         whenever(rawConnection.createChannel()).thenReturn(rawChannel)
-        val managedConnection = ManagedConnection(rawConnection)
-        val channel = managedConnection.createChannel()
+        val managedConnectionImpl = ManagedConnectionImpl(rawConnection)
+        val channel = managedConnectionImpl.createChannel()
 
         channel.abort()
 
-        assertThat(managedConnection.channelCount).isZero()
+        assertThat(managedConnectionImpl.channelCount).isZero()
         verify(rawChannel).abort()
     }
 
@@ -90,33 +90,33 @@ class ManagedConnectionTest {
     fun shouldReportClosedWhenUnderlyingConnectionClosed() {
         val rawConnection = mock<Connection>()
         whenever(rawConnection.isOpen).thenReturn(false)
-        val managedConnection = ManagedConnection(rawConnection)
+        val managedConnectionImpl = ManagedConnectionImpl(rawConnection)
 
-        assertThat(managedConnection.isOpen).isFalse()
+        assertThat(managedConnectionImpl.isOpen).isFalse()
     }
 
     @Test
     fun shouldCloseUnderlyingConnectionOnceAndBeIdempotent() {
         val rawConnection = mock<Connection>()
         whenever(rawConnection.isOpen).thenReturn(true)
-        val managedConnection = ManagedConnection(rawConnection)
+        val managedConnectionImpl = ManagedConnectionImpl(rawConnection)
 
-        managedConnection.close()
-        managedConnection.close()
+        managedConnectionImpl.close()
+        managedConnectionImpl.close()
 
         verify(rawConnection, times(1)).close()
-        assertThat(managedConnection.isOpen).isFalse()
+        assertThat(managedConnectionImpl.isOpen).isFalse()
     }
 
     @Test
     fun shouldThrowWhenCreatingChannelAfterClose() {
         val rawConnection = mock<Connection>()
         whenever(rawConnection.isOpen).thenReturn(true)
-        val managedConnection = ManagedConnection(rawConnection)
+        val managedConnectionImpl = ManagedConnectionImpl(rawConnection)
 
-        managedConnection.close()
+        managedConnectionImpl.close()
 
-        assertThatThrownBy { managedConnection.createChannel() }
+        assertThatThrownBy { managedConnectionImpl.createChannel() }
             .isInstanceOf(IllegalStateException::class.java)
     }
 }

@@ -5,18 +5,18 @@ import com.rabbitmq.client.ShutdownSignalException
 import org.radomskii.rabbit.config.PublisherConfig
 import org.radomskii.rabbit.model.MessageMetadata
 import org.radomskii.rabbit.model.MessagePayload
-import org.radomskii.rabbit.resources.ConnectionPool
+import org.radomskii.rabbit.resources.InitializableConnectionPool
 import java.io.IOException
 import java.util.*
 
 class RabbitPublisher<T> internal constructor(
-    private val connectionPool: ConnectionPool,
+    private val initializableConnectionPool: InitializableConnectionPool,
     private val config: PublisherConfig<T>
 ) {
 
     fun publish(exchange: String, routingKey: String, payload: T, metadata: MessageMetadata = MessageMetadata()) {
         val connection = try {
-            connectionPool.nextConnection()
+            initializableConnectionPool.nextConnection()
         } catch (e: Exception) {
             throw RabbitPublishException(exchange, routingKey, "Failed to obtain a connection", e)
         }
@@ -30,7 +30,6 @@ class RabbitPublisher<T> internal constructor(
         try {
             val body = config.serializer.serialize(payload)
             val properties = buildProperties(metadata, body).build()
-            //TODO separately define strategy of usage of Returns and Confirms
             channel.basicPublish(exchange, routingKey, false, properties, body.bytes)
         } catch (e: MessageReturnedException) {
             throw e

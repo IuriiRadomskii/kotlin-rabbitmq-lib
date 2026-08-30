@@ -6,7 +6,7 @@ import org.radomskii.rabbit.config.PublisherConfig
 import org.radomskii.rabbit.config.ReconnectionConfig
 import org.radomskii.rabbit.consumer.RabbitConsumer
 import org.radomskii.rabbit.publisher.RabbitPublisher
-import org.radomskii.rabbit.resources.ConnectionPool
+import org.radomskii.rabbit.resources.InitializableConnectionPool
 import java.io.Closeable
 import java.util.concurrent.CopyOnWriteArrayList
 import java.util.concurrent.atomic.AtomicBoolean
@@ -17,25 +17,25 @@ class RabbitMQClient private constructor(
     private val reconnectionConfig: ReconnectionConfig
 ) : Closeable {
 
-    private val connectionPool = ConnectionPool(connectionFactory, connectionCount, reconnectionConfig)
+    private val initializableConnectionPool = InitializableConnectionPool(connectionFactory, connectionCount, reconnectionConfig)
     private val publishers = CopyOnWriteArrayList<RabbitPublisher<*>>()
     private val consumers = CopyOnWriteArrayList<RabbitConsumer<*>>()
     private val closed = AtomicBoolean(false)
 
     init {
-        connectionPool.init()
+        initializableConnectionPool.init()
     }
 
     fun <T> createPublisher(config: PublisherConfig<T>): RabbitPublisher<T> {
         check(!closed.get()) { "RabbitMQClient is closed" }
-        val publisher = RabbitPublisher(connectionPool, config)
+        val publisher = RabbitPublisher(initializableConnectionPool, config)
         publishers.add(publisher)
         return publisher
     }
 
     fun <T> createConsumer(config: ConsumerConfig<T>): RabbitConsumer<T> {
         check(!closed.get()) { "RabbitMQClient is closed" }
-        val consumer = RabbitConsumer(connectionPool, config, reconnectionConfig)
+        val consumer = RabbitConsumer(initializableConnectionPool, config, reconnectionConfig)
         consumers.add(consumer)
         return consumer
     }
@@ -46,7 +46,7 @@ class RabbitMQClient private constructor(
             consumers.forEach { if (it.isRunning()) it.stop() }
             consumers.clear()
 
-            connectionPool.close()
+            initializableConnectionPool.close()
         }
     }
 

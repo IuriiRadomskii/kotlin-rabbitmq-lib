@@ -3,6 +3,7 @@ package org.radomskii.rabbit.consumer
 import org.radomskii.rabbit.config.ConsumerConfig
 import org.radomskii.rabbit.config.ReconnectionConfig
 import org.radomskii.rabbit.resources.ConnectionPool
+import org.radomskii.rabbit.resources.InitializableConnectionPool
 import java.time.Duration
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.locks.ReentrantLock

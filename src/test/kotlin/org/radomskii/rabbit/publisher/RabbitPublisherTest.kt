@@ -10,7 +10,7 @@ import org.mockito.kotlin.verify
 import org.mockito.kotlin.whenever
 import org.radomskii.rabbit.config.PublisherConfig
 import org.radomskii.rabbit.model.MessagePayload
-import org.radomskii.rabbit.resources.ConnectionPool
+import org.radomskii.rabbit.resources.InitializableConnectionPool
 import org.radomskii.rabbit.resources.ManagedConnection
 import org.radomskii.rabbit.serialization.MessageSerializer
 import java.io.IOException
@@ -33,14 +33,14 @@ class RabbitPublisherTest {
         whenever(rawChannel.isOpen).thenReturn(true)
         val managedConnection = mock<ManagedConnection>()
         whenever(managedConnection.createChannel()).thenReturn(rawChannel)
-        val connectionPool = mock<ConnectionPool>()
-        whenever(connectionPool.nextConnection()).thenReturn(managedConnection)
+        val initializableConnectionPool = mock<InitializableConnectionPool>()
+        whenever(initializableConnectionPool.nextConnection()).thenReturn(managedConnection)
 
         val config = PublisherConfig(
             serializer = serializer,
             returnListenerTimeout = returnListenerTimeout
         )
-        return Fixture(RabbitPublisher(connectionPool, config), rawChannel)
+        return Fixture(RabbitPublisher(initializableConnectionPool, config), rawChannel)
     }
 
     @Test
