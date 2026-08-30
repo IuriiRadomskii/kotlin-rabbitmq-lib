@@ -21,7 +21,7 @@ import java.time.Duration
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
 
-class InitializableConnectionPoolTest {
+class ConnectionPoolTest {
 
     private fun fastReconnectionConfig(maxAttempts: Int) =
         ReconnectionConfig(maxAttempts = maxAttempts, retryInterval = Duration.ofMillis(1))
@@ -30,7 +30,7 @@ class InitializableConnectionPoolTest {
         whenever(isAutomaticRecoveryEnabled).thenReturn(true)
     }
 
-    private fun awaitConnection(pool: InitializableConnectionPool, timeoutSeconds: Long = 2): ManagedConnection {
+    private fun awaitConnection(pool: ConnectionPool, timeoutSeconds: Long = 2): ConnectionDecorator {
         val connection = await.atMost(timeoutSeconds, TimeUnit.SECONDS) untilCallTo {
             try {
                 pool.nextConnection()
@@ -53,7 +53,7 @@ class InitializableConnectionPoolTest {
         whenever(connection.isOpen).thenReturn(true)
         val factory = mockFactory()
         whenever(factory.newConnection()).thenReturn(connection)
-        val pool = InitializableConnectionPool(factory)
+        val pool = ConnectionPool(factory)
 
         pool.init()
 
@@ -71,7 +71,7 @@ class InitializableConnectionPoolTest {
             attempts++
             if (attempts < 3) throw RuntimeException("Connection is unavailable") else rawConnection
         }
-        val pool = InitializableConnectionPool(factory, reconnectionConfig = fastReconnectionConfig(maxAttempts = 3))
+        val pool = ConnectionPool(factory, reconnectionConfig = fastReconnectionConfig(maxAttempts = 3))
 
         pool.init()
 
@@ -89,7 +89,7 @@ class InitializableConnectionPoolTest {
             actualAttempts++
             throw failure
         }
-        val pool = InitializableConnectionPool(factory, reconnectionConfig = fastReconnectionConfig(expectedAttempts))
+        val pool = ConnectionPool(factory, reconnectionConfig = fastReconnectionConfig(expectedAttempts))
 
         pool.init()
 
@@ -105,7 +105,7 @@ class InitializableConnectionPoolTest {
         whenever(rawConnection.isOpen).thenReturn(true)
         val factory = mockFactory()
         whenever(factory.newConnection()).thenReturn(rawConnection)
-        val pool = InitializableConnectionPool(factory)
+        val pool = ConnectionPool(factory)
         Executors.newFixedThreadPool(10).use { executor ->
             val futures = List(10) {
                 executor.submit { pool.init() }
@@ -118,7 +118,7 @@ class InitializableConnectionPoolTest {
 
     @Test
     fun shouldThrowWhenNextConnectionCalledBeforeInit() {
-        val pool = InitializableConnectionPool(mockFactory())
+        val pool = ConnectionPool(mockFactory())
 
         assertThatThrownBy { pool.nextConnection() }
             .isInstanceOf(RabbitConnectionException::class.java)
@@ -130,7 +130,7 @@ class InitializableConnectionPoolTest {
         whenever(connection.isOpen).thenReturn(true)
         val factory = mockFactory()
         whenever(factory.newConnection()).thenReturn(connection)
-        val pool = InitializableConnectionPool(factory, connectionCount = 1)
+        val pool = ConnectionPool(factory, connectionCount = 1)
         pool.init()
 
         val first = awaitConnection(pool)
@@ -155,7 +155,7 @@ class InitializableConnectionPoolTest {
             callCount++
             if (callCount == 1) firstRawConnection else secondRawConnection
         }
-        val pool = InitializableConnectionPool(
+        val pool = ConnectionPool(
             factory,
             connectionCount = 2,
             reconnectionConfig = fastReconnectionConfig(maxAttempts = 1)
@@ -181,7 +181,7 @@ class InitializableConnectionPoolTest {
         whenever(rawConnection.createChannel()).thenReturn(rawChannel)
         val factory = mockFactory()
         whenever(factory.newConnection()).thenReturn(rawConnection)
-        val pool = InitializableConnectionPool(
+        val pool = ConnectionPool(
             factory,
             connectionCount = 1,
             reconnectionConfig = fastReconnectionConfig(maxAttempts = 1)
@@ -207,7 +207,7 @@ class InitializableConnectionPoolTest {
             callCount++
             if (callCount == 1) rawConnection else throw RuntimeException("boom")
         }
-        val pool = InitializableConnectionPool(
+        val pool = ConnectionPool(
             factory,
             connectionCount = 2,
             reconnectionConfig = fastReconnectionConfig(maxAttempts = 1)
@@ -223,7 +223,7 @@ class InitializableConnectionPoolTest {
 
     @Test
     fun shouldThrowWhenInitCalledAfterClose() {
-        val pool = InitializableConnectionPool(mockFactory())
+        val pool = ConnectionPool(mockFactory())
         pool.close()
 
         assertThatThrownBy { pool.init() }
@@ -245,7 +245,7 @@ class InitializableConnectionPoolTest {
             callCount++
             if (callCount == 1) connection1 else connection2
         }
-        val pool = InitializableConnectionPool(
+        val pool = ConnectionPool(
             factory,
             connectionCount = 2,
             reconnectionConfig = fastReconnectionConfig(maxAttempts = 1)
@@ -267,7 +267,7 @@ class InitializableConnectionPoolTest {
         whenever(rawConnection.isOpen).thenReturn(true)
         val factory = mockFactory()
         whenever(factory.newConnection()).thenReturn(rawConnection)
-        val pool = InitializableConnectionPool(factory)
+        val pool = ConnectionPool(factory)
         pool.init()
         awaitConnection(pool)
 
@@ -281,7 +281,7 @@ class InitializableConnectionPoolTest {
     fun shouldThrowWhenConnectionFactoryHasAutomaticRecoveryDisabled() {
         val factory = ConnectionFactory().apply { isAutomaticRecoveryEnabled = false }
 
-        assertThatThrownBy { InitializableConnectionPool(factory) }
+        assertThatThrownBy { ConnectionPool(factory) }
             .isInstanceOf(IllegalArgumentException::class.java)
     }
 }

@@ -13,7 +13,7 @@ import org.radomskii.rabbit.config.ConsumerConfig
 import org.radomskii.rabbit.model.ConsumeResult
 import org.radomskii.rabbit.model.MessagePayload
 import org.radomskii.rabbit.resources.ConnectionPool
-import org.radomskii.rabbit.resources.ManagedConnection
+import org.radomskii.rabbit.resources.ConnectionDecorator
 import org.radomskii.rabbit.serialization.MessageSerializer
 import java.time.Duration
 
@@ -30,10 +30,10 @@ class RabbitConsumerTest {
         val rawChannel = mock<Channel>()
         whenever(rawChannel.basicConsume(any<String>(), any<Boolean>(), any<DeliverCallback>(), any<CancelCallback>()))
             .thenReturn("consumer-tag")
-        val managedConnection = mock<ManagedConnection>()
-        whenever(managedConnection.createChannel()).thenReturn(rawChannel)
+        val connectionDecorator = mock<ConnectionDecorator>()
+        whenever(connectionDecorator.createChannel()).thenReturn(rawChannel)
         val connectionPool = mock<ConnectionPool>()
-        whenever(connectionPool.nextConnection()).thenReturn(managedConnection)
+        whenever(connectionPool.nextConnection()).thenReturn(connectionDecorator)
 
         val config = ConsumerConfig(
             queues = listOf("q1"),

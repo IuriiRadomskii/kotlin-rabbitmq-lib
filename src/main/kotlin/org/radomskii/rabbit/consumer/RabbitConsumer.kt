@@ -3,7 +3,6 @@ package org.radomskii.rabbit.consumer
 import org.radomskii.rabbit.config.ConsumerConfig
 import org.radomskii.rabbit.config.ReconnectionConfig
 import org.radomskii.rabbit.resources.ConnectionPool
-import org.radomskii.rabbit.resources.InitializableConnectionPool
 import java.time.Duration
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.locks.ReentrantLock
@@ -27,11 +26,10 @@ class RabbitConsumer<T> internal constructor(
         }
     }
 
-    @JvmOverloads
-    fun stop(timeout: Duration = config.gracefulShutdownTimeout) {
+    fun stop() {
         lifecycleLock.withLock {
             if (running.compareAndSet(true, false)) {
-                container?.stop(timeout)
+                container?.stop(config.gracefulShutdownTimeout)
                 container = null
             }
         }

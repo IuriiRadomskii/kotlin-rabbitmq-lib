@@ -44,11 +44,9 @@ internal class ConsumerWorker<T>(
             }
         }
         val cancelCallback = CancelCallback { failed.set(true) }
-
         config.queues.forEach { queue ->
             consumerTags += channel.basicConsume(queue, config.autoAck, deliverCallback, cancelCallback)
         }
-
         running.set(true)
         thread.start()
     }
@@ -69,7 +67,6 @@ internal class ConsumerWorker<T>(
     private fun runMainLoop() {
         try {
             while (running.get()) {
-                // TODO: Question: What happens if deliveryQueue.poll throws InterruptedException. Should Thread.currentThread().interrupt() be called?
                 val delivery = deliveryQueue.poll(POLL_INTERVAL_MILLIS, TimeUnit.MILLISECONDS) ?: continue
                 processDelivery(delivery)
             }
