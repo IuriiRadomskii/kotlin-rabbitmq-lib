@@ -14,8 +14,7 @@ internal class ConnectionDecorator(
     private val openChannelCount = AtomicInteger(0)
 
     init {
-        delegate.id = delegate.id ?: UUID.randomUUID().toString()
-        id = delegate.id
+        id = delegate.id ?: UUID.randomUUID().toString()
     }
 
     val isOpen: Boolean

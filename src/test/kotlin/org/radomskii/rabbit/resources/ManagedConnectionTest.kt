@@ -68,7 +68,7 @@ class ManagedConnectionTest {
         channel.close()
 
         assertThat(connectionDecorator.channelCount).isZero()
-        verify(rawChannel, times(2)).close()
+        verify(rawChannel, times(1)).close()
     }
 
     @Test

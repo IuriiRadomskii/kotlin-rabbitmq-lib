@@ -84,10 +84,9 @@ class ConnectionPoolTest {
         val factory = mockFactory()
         var actualAttempts = 0
         var expectedAttempts = 2
-        val failure = RuntimeException("boom")
         whenever(factory.newConnection()).thenAnswer {
             actualAttempts++
-            throw failure
+            throw RuntimeException("boom")
         }
         val pool = ConnectionPool(factory, reconnectionConfig = fastReconnectionConfig(expectedAttempts))
 

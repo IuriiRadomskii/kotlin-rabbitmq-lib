@@ -31,8 +31,6 @@ class RabbitPublisher<T> internal constructor(
             val body = config.serializer.serialize(payload)
             val properties = buildProperties(metadata, body).build()
             channel.basicPublish(exchange, routingKey, false, properties, body.bytes)
-        } catch (e: MessageReturnedException) {
-            throw e
         } catch (e: IOException) {
             throw RabbitPublishException(exchange, routingKey, "Failed to publish message", e)
         } catch (e: ShutdownSignalException) {

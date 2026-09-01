@@ -15,7 +15,7 @@ internal class ChannelDecorator(
     private val closed = AtomicBoolean(false)
 
     override fun isOpen(): Boolean {
-        return closed.get().not()
+        return closed.get().not() && delegate.isOpen
     }
 
     override fun close() {
@@ -32,6 +32,26 @@ internal class ChannelDecorator(
         if (closed.compareAndSet(false, true)) {
             try {
                 delegate.close(closeCode, closeMessage)
+            } finally {
+                onClose.invoke()
+            }
+        }
+    }
+
+    override fun abort() {
+        if (closed.compareAndSet(false, true)) {
+            try {
+                delegate.abort()
+            } finally {
+                onClose.invoke()
+            }
+        }
+    }
+
+    override fun abort(closeCode: Int, closeMessage: String?) {
+        if (closed.compareAndSet(false, true)) {
+            try {
+                delegate.abort(closeCode, closeMessage)
             } finally {
                 onClose.invoke()
             }

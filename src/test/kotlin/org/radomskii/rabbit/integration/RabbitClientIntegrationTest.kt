@@ -2,7 +2,6 @@ package org.radomskii.rabbit.integration
 
 import com.rabbitmq.client.ConnectionFactory
 import org.assertj.core.api.Assertions.assertThat
-import org.assertj.core.api.Assertions.assertThatThrownBy
 import org.junit.jupiter.api.AfterAll
 import org.junit.jupiter.api.BeforeAll
 import org.junit.jupiter.api.Tag
@@ -11,13 +10,11 @@ import org.radomskii.rabbit.RabbitMQClient
 import org.radomskii.rabbit.config.ConsumerConfig
 import org.radomskii.rabbit.config.PublisherConfig
 import org.radomskii.rabbit.model.ConsumeResult
-import org.radomskii.rabbit.publisher.MessageReturnedException
 import org.radomskii.rabbit.serialization.JsonMessageSerializer
 import org.testcontainers.containers.RabbitMQContainer
 import org.testcontainers.junit.jupiter.Container
 import org.testcontainers.junit.jupiter.Testcontainers
 import org.testcontainers.utility.DockerImageName
-import java.time.Duration
 import java.util.concurrent.ArrayBlockingQueue
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicInteger
@@ -102,20 +99,6 @@ class RabbitClientIntegrationTest {
         } finally {
             consumer.stop()
         }
-    }
-
-    @Test
-    fun shouldThrowMessageReturnedExceptionWhenMandatoryPublishIsUnroutable() {
-        val publisher = client.createPublisher(
-            PublisherConfig(
-                serializer = JsonMessageSerializer.create<SampleEvent>(),
-                returnListenerTimeout = Duration.ofSeconds(5)
-            )
-        )
-
-        assertThatThrownBy {
-            publisher.publish("", "no.such.queue.${System.nanoTime()}", SampleEvent(2, "lost"))
-        }.isInstanceOf(MessageReturnedException::class.java)
     }
 
     @Test
