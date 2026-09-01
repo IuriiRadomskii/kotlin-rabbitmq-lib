@@ -1,7 +1,6 @@
 package org.radomskii.rabbit.consumer
 
 import org.radomskii.rabbit.config.ConsumerConfig
-import org.radomskii.rabbit.config.ReconnectionConfig
 import org.radomskii.rabbit.resources.ConnectionPool
 import org.slf4j.LoggerFactory
 import java.time.Duration
@@ -11,8 +10,7 @@ import kotlin.concurrent.withLock
 
 class RabbitConsumer<T> internal constructor(
     private val connectionPool: ConnectionPool,
-    private val config: ConsumerConfig<T>,
-    private val reconnectionConfig: ReconnectionConfig = ReconnectionConfig()
+    private val config: ConsumerConfig<T>
 ) {
     private val lifecycleLock = ReentrantLock()
     private val running = AtomicBoolean(false)
@@ -26,7 +24,7 @@ class RabbitConsumer<T> internal constructor(
         lifecycleLock.withLock {
             log.trace("Starting RabbitConsumer: queues={}, workerPoolSize={}", config.queues, config.workerPoolSize)
             check(running.compareAndSet(false, true)) { "RabbitConsumer already started" }
-            val newContainer = ConsumerWorkerContainer(connectionPool, config, handler, reconnectionConfig)
+            val newContainer = ConsumerWorkerContainer(connectionPool, config, handler)
             container = newContainer
             newContainer.start()
             log.trace("RabbitConsumer started: queues={}", config.queues)

@@ -16,6 +16,7 @@ import org.mockito.kotlin.timeout
 import org.mockito.kotlin.times
 import org.mockito.kotlin.verify
 import org.mockito.kotlin.whenever
+import org.radomskii.rabbit.config.ConnectionPoolConfig
 import org.radomskii.rabbit.config.ReconnectionConfig
 import java.time.Duration
 import java.util.concurrent.Executors
@@ -71,7 +72,7 @@ class ConnectionPoolTest {
             attempts++
             if (attempts < 3) throw RuntimeException("Connection is unavailable") else rawConnection
         }
-        val pool = ConnectionPool(factory, reconnectionConfig = fastReconnectionConfig(maxAttempts = 3))
+        val pool = ConnectionPool(factory, ConnectionPoolConfig(reconnectionConfig = fastReconnectionConfig(maxAttempts = 3)))
 
         pool.init()
 
@@ -88,7 +89,7 @@ class ConnectionPoolTest {
             actualAttempts++
             throw RuntimeException("boom")
         }
-        val pool = ConnectionPool(factory, reconnectionConfig = fastReconnectionConfig(expectedAttempts))
+        val pool = ConnectionPool(factory, ConnectionPoolConfig(reconnectionConfig = fastReconnectionConfig(expectedAttempts)))
 
         pool.init()
 
@@ -129,7 +130,7 @@ class ConnectionPoolTest {
         whenever(connection.isOpen).thenReturn(true)
         val factory = mockFactory()
         whenever(factory.newConnection()).thenReturn(connection)
-        val pool = ConnectionPool(factory, connectionCount = 1)
+        val pool = ConnectionPool(factory, ConnectionPoolConfig(connectionCount = 1))
         pool.init()
 
         val first = awaitConnection(pool)
@@ -156,8 +157,7 @@ class ConnectionPoolTest {
         }
         val pool = ConnectionPool(
             factory,
-            connectionCount = 2,
-            reconnectionConfig = fastReconnectionConfig(maxAttempts = 1)
+            ConnectionPoolConfig(connectionCount = 2, reconnectionConfig = fastReconnectionConfig(maxAttempts = 1))
         )
         pool.init()
 
@@ -182,8 +182,7 @@ class ConnectionPoolTest {
         whenever(factory.newConnection()).thenReturn(rawConnection)
         val pool = ConnectionPool(
             factory,
-            connectionCount = 1,
-            reconnectionConfig = fastReconnectionConfig(maxAttempts = 1)
+            ConnectionPoolConfig(connectionCount = 1, reconnectionConfig = fastReconnectionConfig(maxAttempts = 1))
         )
         pool.init()
 
@@ -208,8 +207,7 @@ class ConnectionPoolTest {
         }
         val pool = ConnectionPool(
             factory,
-            connectionCount = 2,
-            reconnectionConfig = fastReconnectionConfig(maxAttempts = 1)
+            ConnectionPoolConfig(connectionCount = 2, reconnectionConfig = fastReconnectionConfig(maxAttempts = 1))
         )
         pool.init()
 
@@ -246,8 +244,7 @@ class ConnectionPoolTest {
         }
         val pool = ConnectionPool(
             factory,
-            connectionCount = 2,
-            reconnectionConfig = fastReconnectionConfig(maxAttempts = 1)
+            ConnectionPoolConfig(connectionCount = 2, reconnectionConfig = fastReconnectionConfig(maxAttempts = 1))
         )
         pool.init()
         val first = awaitConnection(pool)

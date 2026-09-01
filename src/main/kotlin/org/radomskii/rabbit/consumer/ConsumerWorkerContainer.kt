@@ -1,7 +1,6 @@
 package org.radomskii.rabbit.consumer
 
 import org.radomskii.rabbit.config.ConsumerConfig
-import org.radomskii.rabbit.config.ReconnectionConfig
 import org.radomskii.rabbit.resources.ConnectionPool
 import org.slf4j.LoggerFactory
 import java.time.Duration
@@ -14,9 +13,9 @@ import java.util.concurrent.atomic.AtomicBoolean
 internal class ConsumerWorkerContainer<T>(
     private val connectionPool: ConnectionPool,
     private val config: ConsumerConfig<T>,
-    private val handler: MessageHandler<T>,
-    private val reconnectionConfig: ReconnectionConfig = ReconnectionConfig()
+    private val handler: MessageHandler<T>
 ) {
+    private val reconnectionConfig = config.reconnectionConfig
     private val workers = CopyOnWriteArrayList<ConsumerWorker<T>>()
     private val running = AtomicBoolean(false)
     private val scheduler = Executors.newSingleThreadScheduledExecutor(Thread.ofVirtual().factory())

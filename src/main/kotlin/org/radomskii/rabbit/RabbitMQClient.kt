@@ -1,9 +1,9 @@
 package org.radomskii.rabbit
 
 import com.rabbitmq.client.ConnectionFactory
+import org.radomskii.rabbit.config.ConnectionPoolConfig
 import org.radomskii.rabbit.config.ConsumerConfig
 import org.radomskii.rabbit.config.PublisherConfig
-import org.radomskii.rabbit.config.ReconnectionConfig
 import org.radomskii.rabbit.consumer.RabbitConsumer
 import org.radomskii.rabbit.publisher.RabbitPublisher
 import org.radomskii.rabbit.resources.ConnectionPool
@@ -14,17 +14,16 @@ import java.util.concurrent.atomic.AtomicBoolean
 
 class RabbitMQClient private constructor(
     connectionFactory: ConnectionFactory,
-    connectionCount: Int,
-    private val reconnectionConfig: ReconnectionConfig
+    connectionPoolConfig: ConnectionPoolConfig
 ) : Closeable {
 
-    private val connectionPool = ConnectionPool(connectionFactory, connectionCount, reconnectionConfig)
+    private val connectionPool = ConnectionPool(connectionFactory, connectionPoolConfig)
     private val publishers = CopyOnWriteArrayList<RabbitPublisher<*>>()
     private val consumers = CopyOnWriteArrayList<RabbitConsumer<*>>()
     private val closed = AtomicBoolean(false)
 
     init {
-        log.trace("Initializing RabbitMQClient: connectionCount={}", connectionCount)
+        log.trace("Initializing RabbitMQClient")
         connectionPool.init()
         log.trace("RabbitMQClient initialized")
     }
@@ -39,7 +38,7 @@ class RabbitMQClient private constructor(
 
     fun <T> createConsumer(config: ConsumerConfig<T>): RabbitConsumer<T> {
         check(!closed.get()) { "RabbitMQClient is closed" }
-        val consumer = RabbitConsumer(connectionPool, config, reconnectionConfig)
+        val consumer = RabbitConsumer(connectionPool, config)
         consumers.add(consumer)
         log.trace("Consumer created: {}", consumer)
         return consumer
@@ -61,18 +60,15 @@ class RabbitMQClient private constructor(
 
     class Builder {
         private var connectionFactory: ConnectionFactory? = null
-        private var connectionCount: Int = 1
-        private var reconnectionConfig: ReconnectionConfig = ReconnectionConfig()
+        private var connectionPoolConfig: ConnectionPoolConfig = ConnectionPoolConfig()
 
         fun connectionFactory(factory: ConnectionFactory) = apply { this.connectionFactory = factory }
 
-        fun connectionCount(count: Int) = apply { this.connectionCount = count }
-
-        fun reconnectionConfig(config: ReconnectionConfig) = apply { this.reconnectionConfig = config }
+        fun connectionPoolConfig(config: ConnectionPoolConfig) = apply { this.connectionPoolConfig = config }
 
         fun build(): RabbitMQClient {
             val resolvedConnectionFactory = requireNotNull(connectionFactory) { "connectionFactory must be set" }
-            return RabbitMQClient(resolvedConnectionFactory, connectionCount, reconnectionConfig)
+            return RabbitMQClient(resolvedConnectionFactory, connectionPoolConfig)
         }
     }
 

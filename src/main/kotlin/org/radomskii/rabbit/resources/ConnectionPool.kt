@@ -1,7 +1,7 @@
 package org.radomskii.rabbit.resources
 
 import com.rabbitmq.client.ConnectionFactory
-import org.radomskii.rabbit.config.ReconnectionConfig
+import org.radomskii.rabbit.config.ConnectionPoolConfig
 import org.slf4j.LoggerFactory
 import java.io.Closeable
 import java.time.Duration
@@ -19,11 +19,9 @@ import kotlin.concurrent.withLock
 
 internal class ConnectionPool(
     private val connectionFactory: ConnectionFactory,
-    private val connectionCount: Int = 1,
-    private val reconnectionConfig: ReconnectionConfig = ReconnectionConfig()
+    private val connectionPoolConfig: ConnectionPoolConfig = ConnectionPoolConfig()
 ): Closeable {
     init {
-        require(connectionCount > 0) { "connectionCount must be positive" }
         require(connectionFactory.isAutomaticRecoveryEnabled) {
             "connectionFactory must have automatic recovery enabled (isAutomaticRecoveryEnabled = true) - " +
                     "ConnectionPool relies on it to survive network interruptions and broker restarts"
@@ -48,13 +46,13 @@ internal class ConnectionPool(
                 log.trace("ConnectionPool already initialized, skipping")
                 return
             }
-            log.trace("Initializing connection pool: connectionCount={}", connectionCount)
+            log.trace("Initializing connection pool: connectionCount={}", connectionPoolConfig.connectionCount)
             retryWorker.start()
             enqueueConnectionAttempt(
                 attemptNumber = 1,
                 onSuccess = { connections.add(it) }
             )
-            val pollMillis = reconnectionConfig.retryInterval.toMillis()
+            val pollMillis = connectionPoolConfig.reconnectionConfig.retryInterval.toMillis()
             capacitySupervisorTask = scalingScheduler.scheduleWithFixedDelay(
                 ::triggerScaleUpIfNearCapacity,
                 pollMillis,
@@ -89,9 +87,10 @@ internal class ConnectionPool(
                 capacitySupervisorTask?.cancel(false)
                 scalingScheduler.shutdown()
                 retryWorker.interrupt()
+                val schedulerShutdownMillis = connectionPoolConfig.schedulerShutdownTimeout.toMillis()
                 try {
-                    scalingScheduler.awaitTermination(SCHEDULER_SHUTDOWN_MILLIS, TimeUnit.MILLISECONDS)
-                    retryWorker.join(SCHEDULER_SHUTDOWN_MILLIS)
+                    scalingScheduler.awaitTermination(schedulerShutdownMillis, TimeUnit.MILLISECONDS)
+                    retryWorker.join(schedulerShutdownMillis)
                 } catch (e: InterruptedException) {
                     Thread.currentThread().interrupt()
                 }
@@ -141,6 +140,7 @@ internal class ConnectionPool(
             }
             task.onDone()
         } catch (e: Exception) {
+            val reconnectionConfig = connectionPoolConfig.reconnectionConfig
             log.warn(
                 "Failed to open RabbitMQ connection (attempt {}/{})",
                 task.attemptNumber, reconnectionConfig.maxAttempts, e
@@ -164,7 +164,7 @@ internal class ConnectionPool(
 
     private fun triggerScaleUpIfNearCapacity() {
         if (closed.get()) return
-        if (connections.size >= connectionCount) return
+        if (connections.size >= connectionPoolConfig.connectionCount) return
         if (connections.none { it.isOpen && isNearChannelCapacity(it) }) return
         if (!scalingInProgress.compareAndSet(false, true)) return
 
@@ -179,13 +179,11 @@ internal class ConnectionPool(
     private fun isNearChannelCapacity(connection: ConnectionDecorator): Boolean {
         val channelMax = connection.channelMax
         if (channelMax == 0) return false
-        return connection.channelCount >= channelMax * SCALE_UP_THRESHOLD_RATIO
+        return connection.channelCount >= channelMax * connectionPoolConfig.scaleUpThresholdRatio
     }
 
     private companion object {
         val log = LoggerFactory.getLogger(ConnectionPool::class.java)
-        const val SCALE_UP_THRESHOLD_RATIO = 0.75
-        const val SCHEDULER_SHUTDOWN_MILLIS = 2_000L
     }
 
     private class ConnectionAttemptTask(

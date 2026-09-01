@@ -11,7 +11,8 @@ data class ConsumerConfig<T>(
     val autoAck: Boolean = false,
     val queueCapacity: Int = 1000,
     val gracefulShutdownTimeout: Duration = Duration.ofSeconds(30),
-    val supervisorPollInterval: Duration = Duration.ofSeconds(1)
+    val supervisorPollInterval: Duration = Duration.ofSeconds(1),
+    val reconnectionConfig: ReconnectionConfig = ReconnectionConfig()
 ) {
     init {
         require(queues.isNotEmpty()) { "queues must not be empty" }
