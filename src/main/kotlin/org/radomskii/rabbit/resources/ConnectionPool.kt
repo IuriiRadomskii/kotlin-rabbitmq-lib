@@ -17,10 +17,10 @@ import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.locks.ReentrantLock
 import kotlin.concurrent.withLock
 
-internal class ConnectionPool(
+class ConnectionPool internal constructor(
     private val connectionFactory: ConnectionFactory,
     private val connectionPoolConfig: ConnectionPoolConfig = ConnectionPoolConfig()
-): Closeable {
+) : Closeable {
     init {
         require(connectionFactory.isAutomaticRecoveryEnabled) {
             "connectionFactory must have automatic recovery enabled (isAutomaticRecoveryEnabled = true) - " +
@@ -63,7 +63,7 @@ internal class ConnectionPool(
         }
     }
 
-    fun nextConnection(): ConnectionDecorator {
+    internal fun nextConnection(): ConnectionDecorator {
         if (closed.get()) throw RabbitConnectionException("ConnectionPool is closed")
         if (!initialized.get()) throw RabbitConnectionException("ConnectionPool is not initialized")
 
@@ -182,8 +182,27 @@ internal class ConnectionPool(
         return connection.channelCount >= channelMax * connectionPoolConfig.scaleUpThresholdRatio
     }
 
-    private companion object {
-        val log = LoggerFactory.getLogger(ConnectionPool::class.java)
+    class Builder {
+        private var connectionFactory: ConnectionFactory? = null
+        private var connectionPoolConfig: ConnectionPoolConfig = ConnectionPoolConfig()
+
+        fun connectionFactory(factory: ConnectionFactory) = apply { this.connectionFactory = factory }
+
+        fun connectionPoolConfig(config: ConnectionPoolConfig) = apply { this.connectionPoolConfig = config }
+
+        fun build(): ConnectionPool {
+            val resolvedConnectionFactory = requireNotNull(connectionFactory) { "connectionFactory must be set" }
+            val pool = ConnectionPool(resolvedConnectionFactory, connectionPoolConfig)
+            pool.init()
+            return pool
+        }
+    }
+
+    companion object {
+        @JvmStatic
+        fun builder(): Builder = Builder()
+
+        private val log = LoggerFactory.getLogger(ConnectionPool::class.java)
     }
 
     private class ConnectionAttemptTask(

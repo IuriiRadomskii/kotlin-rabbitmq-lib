@@ -15,10 +15,6 @@ class RabbitPublisher<T> internal constructor(
     private val config: PublisherConfig<T>
 ) {
 
-    private companion object {
-        val log = LoggerFactory.getLogger(RabbitPublisher::class.java)
-    }
-
     fun publish(exchange: String, routingKey: String, payload: T, metadata: MessageMetadata = MessageMetadata()) {
         log.trace(
             "Publishing message: exchange={}, routingKey={}, messageId={}, correlationId={}",
@@ -74,6 +70,28 @@ class RabbitPublisher<T> internal constructor(
             .priority(metadata.priority)
         metadata.expiration?.let { builder.expiration(it.toMillis().toString()) }
         return builder
+    }
+
+    class Builder<T> {
+        private var connectionPool: ConnectionPool? = null
+        private var config: PublisherConfig<T>? = null
+
+        fun connectionPool(pool: ConnectionPool) = apply { this.connectionPool = pool }
+
+        fun config(config: PublisherConfig<T>) = apply { this.config = config }
+
+        fun build(): RabbitPublisher<T> {
+            val resolvedConnectionPool = requireNotNull(connectionPool) { "connectionPool must be set" }
+            val resolvedConfig = requireNotNull(config) { "config must be set" }
+            return RabbitPublisher(resolvedConnectionPool, resolvedConfig)
+        }
+    }
+
+    companion object {
+        @JvmStatic
+        fun <T> builder(): Builder<T> = Builder()
+
+        private val log = LoggerFactory.getLogger(RabbitPublisher::class.java)
     }
 
 }

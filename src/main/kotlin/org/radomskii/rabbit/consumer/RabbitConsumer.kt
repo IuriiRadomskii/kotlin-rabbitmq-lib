@@ -16,10 +16,6 @@ class RabbitConsumer<T> internal constructor(
     private val running = AtomicBoolean(false)
     private var container: ConsumerWorkerContainer<T>? = null
 
-    private companion object {
-        val log = LoggerFactory.getLogger(RabbitConsumer::class.java)
-    }
-
     fun start(handler: MessageHandler<T>) {
         lifecycleLock.withLock {
             log.trace("Starting RabbitConsumer: queues={}, workerPoolSize={}", config.queues, config.workerPoolSize)
@@ -45,4 +41,26 @@ class RabbitConsumer<T> internal constructor(
     }
 
     fun isRunning(): Boolean = running.get()
+
+    class Builder<T> {
+        private var connectionPool: ConnectionPool? = null
+        private var config: ConsumerConfig<T>? = null
+
+        fun connectionPool(pool: ConnectionPool) = apply { this.connectionPool = pool }
+
+        fun config(config: ConsumerConfig<T>) = apply { this.config = config }
+
+        fun build(): RabbitConsumer<T> {
+            val resolvedConnectionPool = requireNotNull(connectionPool) { "connectionPool must be set" }
+            val resolvedConfig = requireNotNull(config) { "config must be set" }
+            return RabbitConsumer(resolvedConnectionPool, resolvedConfig)
+        }
+    }
+
+    companion object {
+        @JvmStatic
+        fun <T> builder(): Builder<T> = Builder()
+
+        private val log = LoggerFactory.getLogger(RabbitConsumer::class.java)
+    }
 }

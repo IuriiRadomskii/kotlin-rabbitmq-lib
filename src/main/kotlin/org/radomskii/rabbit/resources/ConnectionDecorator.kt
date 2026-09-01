@@ -10,17 +10,9 @@ import java.util.concurrent.atomic.AtomicInteger
 internal class ConnectionDecorator(
     private val delegate: Connection
 ) {
-    val id: String
+    val id: String = delegate.id ?: UUID.randomUUID().toString()
     private val closed = AtomicBoolean(false)
     private val openChannelCount = AtomicInteger(0)
-
-    private companion object {
-        val log = LoggerFactory.getLogger(ConnectionDecorator::class.java)
-    }
-
-    init {
-        id = delegate.id ?: UUID.randomUUID().toString()
-    }
 
     val isOpen: Boolean
         get() = !closed.get() && delegate.isOpen
@@ -60,5 +52,9 @@ internal class ConnectionDecorator(
 
     override fun toString(): String =
         "ConnectionDecorator(id=$id, isOpen=$isOpen, channels=$channelCount, address = ${delegate.address})"
+
+    private companion object {
+        private val log = LoggerFactory.getLogger(ConnectionDecorator::class.java)
+    }
 
 }
