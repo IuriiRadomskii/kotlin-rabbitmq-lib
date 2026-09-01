@@ -4,7 +4,10 @@ import com.rabbitmq.client.ConnectionFactory
 import org.radomskii.rabbit.config.ReconnectionConfig
 import org.slf4j.LoggerFactory
 import java.io.Closeable
+import java.time.Duration
 import java.util.concurrent.CopyOnWriteArrayList
+import java.util.concurrent.Delayed
+import java.util.concurrent.DelayQueue
 import java.util.concurrent.Executors.newSingleThreadScheduledExecutor
 import java.util.concurrent.ScheduledExecutorService
 import java.util.concurrent.ScheduledFuture
@@ -34,7 +37,8 @@ internal class ConnectionPool(
     private val roundRobin = AtomicInteger(0)
     private val connections = CopyOnWriteArrayList<ConnectionDecorator>()
     private val scalingScheduler: ScheduledExecutorService = newSingleThreadScheduledExecutor(Thread.ofVirtual().factory())
-    private val connectionRetryScheduler: ScheduledExecutorService = newSingleThreadScheduledExecutor(Thread.ofVirtual().factory())
+    private val retryQueue = DelayQueue<ConnectionAttemptTask>()
+    private val retryWorker = Thread.ofPlatform().name("connection-pool-retry-worker").unstarted { runRetryLoop() }
     private var capacitySupervisorTask: ScheduledFuture<*>? = null
 
     fun init() {
@@ -45,8 +49,9 @@ internal class ConnectionPool(
                 return
             }
             log.trace("Initializing connection pool: connectionCount={}", connectionCount)
-            scheduleConnectionAttempt(
-                numberOfAttempt = 1,
+            retryWorker.start()
+            enqueueConnectionAttempt(
+                attemptNumber = 1,
                 onSuccess = { connections.add(it) }
             )
             val pollMillis = reconnectionConfig.retryInterval.toMillis()
@@ -83,10 +88,10 @@ internal class ConnectionPool(
                 log.trace("Closing connection pool: connections={}", connections.size)
                 capacitySupervisorTask?.cancel(false)
                 scalingScheduler.shutdown()
-                connectionRetryScheduler.shutdown()
+                retryWorker.interrupt()
                 try {
                     scalingScheduler.awaitTermination(SCHEDULER_SHUTDOWN_MILLIS, TimeUnit.MILLISECONDS)
-                    connectionRetryScheduler.awaitTermination(SCHEDULER_SHUTDOWN_MILLIS, TimeUnit.MILLISECONDS)
+                    retryWorker.join(SCHEDULER_SHUTDOWN_MILLIS)
                 } catch (e: InterruptedException) {
                     Thread.currentThread().interrupt()
                 }
@@ -99,44 +104,60 @@ internal class ConnectionPool(
         }
     }
 
-    private fun scheduleConnectionAttempt(
-        numberOfAttempt: Int,
+    private fun enqueueConnectionAttempt(
+        attemptNumber: Int,
         onSuccess: (ConnectionDecorator) -> Unit,
-        onDone: () -> Unit = {}
+        onDone: () -> Unit = {},
+        delay: Duration = Duration.ZERO
     ) {
-        log.trace("Schedule connection task: attempts = $numberOfAttempt")
-        connectionRetryScheduler.execute {
-            if (closed.get()) {
-                onDone()
-                return@execute
+        log.trace("Enqueueing connection attempt: attempt={}, delay={}", attemptNumber, delay)
+        retryQueue.put(ConnectionAttemptTask(attemptNumber, onSuccess, onDone, delay))
+    }
+
+    private fun runRetryLoop() {
+        while (!closed.get()) {
+            val task = try {
+                retryQueue.take()
+            } catch (e: InterruptedException) {
+                Thread.currentThread().interrupt()
+                return
             }
-            try {
-                val connection = ConnectionDecorator(connectionFactory.newConnection())
-                if (closed.get()) {
-                    connection.close()
-                } else {
-                    log.trace("Connection created: {}", connection)
-                    onSuccess(connection)
-                }
-                onDone()
-            } catch (e: Exception) {
-                log.warn(
-                    "Failed to open RabbitMQ connection (attempt {}/{})",
-                    numberOfAttempt, reconnectionConfig.maxAttempts, e
+            processConnectionAttempt(task)
+        }
+    }
+
+    private fun processConnectionAttempt(task: ConnectionAttemptTask) {
+        if (closed.get()) {
+            task.onDone()
+            return
+        }
+        try {
+            val connection = ConnectionDecorator(connectionFactory.newConnection())
+            if (closed.get()) {
+                connection.close()
+            } else {
+                log.trace("Connection created: {}", connection)
+                task.onSuccess(connection)
+            }
+            task.onDone()
+        } catch (e: Exception) {
+            log.warn(
+                "Failed to open RabbitMQ connection (attempt {}/{})",
+                task.attemptNumber, reconnectionConfig.maxAttempts, e
+            )
+            if (task.attemptNumber < reconnectionConfig.maxAttempts) {
+                enqueueConnectionAttempt(
+                    attemptNumber = task.attemptNumber + 1,
+                    onSuccess = task.onSuccess,
+                    onDone = task.onDone,
+                    delay = reconnectionConfig.retryInterval
                 )
-                if (numberOfAttempt < reconnectionConfig.maxAttempts) {
-                    connectionRetryScheduler.schedule(
-                        { scheduleConnectionAttempt(numberOfAttempt + 1, onSuccess, onDone) },
-                        reconnectionConfig.retryInterval.toMillis(),
-                        TimeUnit.MILLISECONDS
-                    )
-                } else {
-                    log.warn(
-                        "Giving up opening a RabbitMQ connection after {} attempts",
-                        reconnectionConfig.maxAttempts
-                    )
-                    onDone()
-                }
+            } else {
+                log.warn(
+                    "Giving up opening a RabbitMQ connection after {} attempts",
+                    reconnectionConfig.maxAttempts
+                )
+                task.onDone()
             }
         }
     }
@@ -148,8 +169,8 @@ internal class ConnectionPool(
         if (!scalingInProgress.compareAndSet(false, true)) return
 
         log.trace("Scaling up connections")
-        scheduleConnectionAttempt(
-            numberOfAttempt = 1,
+        enqueueConnectionAttempt(
+            attemptNumber = 1,
             onSuccess = { connections.add(it) },
             onDone = { scalingInProgress.set(false) }
         )
@@ -165,6 +186,21 @@ internal class ConnectionPool(
         val log = LoggerFactory.getLogger(ConnectionPool::class.java)
         const val SCALE_UP_THRESHOLD_RATIO = 0.75
         const val SCHEDULER_SHUTDOWN_MILLIS = 2_000L
+    }
+
+    private class ConnectionAttemptTask(
+        val attemptNumber: Int,
+        val onSuccess: (ConnectionDecorator) -> Unit,
+        val onDone: () -> Unit,
+        delay: Duration
+    ) : Delayed {
+        private val readyAtNanos = System.nanoTime() + delay.toNanos()
+
+        override fun getDelay(unit: TimeUnit): Long =
+            unit.convert(readyAtNanos - System.nanoTime(), TimeUnit.NANOSECONDS)
+
+        override fun compareTo(other: Delayed): Int =
+            getDelay(TimeUnit.NANOSECONDS).compareTo(other.getDelay(TimeUnit.NANOSECONDS))
     }
 
 }
