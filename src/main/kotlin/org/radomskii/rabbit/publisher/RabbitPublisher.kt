@@ -6,6 +6,7 @@ import org.radomskii.rabbit.config.PublisherConfig
 import org.radomskii.rabbit.model.MessageMetadata
 import org.radomskii.rabbit.model.MessagePayload
 import org.radomskii.rabbit.resources.ConnectionPool
+import org.slf4j.LoggerFactory
 import java.io.IOException
 import java.util.*
 
@@ -14,16 +15,27 @@ class RabbitPublisher<T> internal constructor(
     private val config: PublisherConfig<T>
 ) {
 
+    private companion object {
+        val log = LoggerFactory.getLogger(RabbitPublisher::class.java)
+    }
+
     fun publish(exchange: String, routingKey: String, payload: T, metadata: MessageMetadata = MessageMetadata()) {
+        log.trace(
+            "Publishing message: exchange={}, routingKey={}, messageId={}, correlationId={}",
+            exchange, routingKey, metadata.messageId, metadata.correlationId
+        )
+
         val connection = try {
             connectionPool.nextConnection()
         } catch (e: Exception) {
+            log.error("Failed to obtain a connection for publish: exchange={}, routingKey={}", exchange, routingKey, e)
             throw RabbitPublishException(exchange, routingKey, "Failed to obtain a connection", e)
         }
 
         val channel = try {
             connection.createChannel()
         } catch (e: Exception) {
+            log.error("Failed to create a channel for publish: exchange={}, routingKey={}, connection={}", exchange, routingKey, connection, e)
             throw RabbitPublishException(exchange, routingKey, "Failed to create a channel", e)
         }
 
@@ -31,11 +43,18 @@ class RabbitPublisher<T> internal constructor(
             val body = config.serializer.serialize(payload)
             val properties = buildProperties(metadata, body).build()
             channel.basicPublish(exchange, routingKey, false, properties, body.bytes)
+            log.trace(
+                "Message published: exchange={}, routingKey={}, messageId={}, bodyBytes={}",
+                exchange, routingKey, metadata.messageId, body.bytes.size
+            )
         } catch (e: IOException) {
+            log.error("Failed to publish message: exchange={}, routingKey={}, messageId={}", exchange, routingKey, metadata.messageId, e)
             throw RabbitPublishException(exchange, routingKey, "Failed to publish message", e)
         } catch (e: ShutdownSignalException) {
+            log.error("Failed to publish message: exchange={}, routingKey={}, messageId={}", exchange, routingKey, metadata.messageId, e)
             throw RabbitPublishException(exchange, routingKey, "Failed to publish message", e)
         } finally {
+            log.trace("Closing publish channel: exchange={}, routingKey={}", exchange, routingKey)
             runCatching { if (channel.isOpen) channel.close() }
         }
     }

@@ -30,11 +30,13 @@ internal class ConsumerWorkerContainer<T>(
 
     fun start() {
         check(running.compareAndSet(false, true)) { "ConsumerWorkerContainer already started" }
+        log.trace("Starting consumer worker container: queues={}, workerPoolSize={}", config.queues, config.workerPoolSize)
         try {
             repeat(config.workerPoolSize) { workerId ->
                 workers.add(createAndStartWorkerWithRetry(workerId))
             }
         } catch (e: Exception) {
+            log.error("Failed to start consumer worker container, force-closing {} workers", workers.size, e)
             workers.forEach { it.forceClose() }
             workers.clear()
             running.set(false)
@@ -45,6 +47,7 @@ internal class ConsumerWorkerContainer<T>(
         supervisorTask = scheduler.scheduleWithFixedDelay(
             ::checkWorkers, pollIntervalMillis, pollIntervalMillis, TimeUnit.MILLISECONDS
         )
+        log.trace("Consumer worker container started: workers={}, supervisorPollIntervalMillis={}", workers.size, pollIntervalMillis)
     }
 
     private fun createAndStartWorkerWithRetry(workerId: Int): ConsumerWorker<T> {
@@ -78,10 +81,12 @@ internal class ConsumerWorkerContainer<T>(
     }
 
     private fun createAndStartWorker(workerId: Int): ConsumerWorker<T> {
+        log.trace("Creating consumer worker {}", workerId)
         val connection = connectionPool.nextConnection()
         val channel = connection.createChannel()
         val worker = ConsumerWorker(workerId, channel, config, handler)
         worker.start()
+        log.trace("Consumer worker {} created and started", workerId)
         return worker
     }
 
@@ -92,6 +97,7 @@ internal class ConsumerWorkerContainer<T>(
                 if (!running.get()) return
                 val worker = workers[index]
                 if (!worker.isAlive || worker.hasFailed) {
+                    log.trace("Consumer worker {} unhealthy: isAlive={}, hasFailed={}, restarting", index, worker.isAlive, worker.hasFailed)
                     worker.forceClose()
                     try {
                         workers[index] = createAndStartWorker(index)
@@ -106,7 +112,11 @@ internal class ConsumerWorkerContainer<T>(
     }
 
     fun stop(timeout: Duration) {
-        if (!running.compareAndSet(true, false)) return
+        if (!running.compareAndSet(true, false)) {
+            log.trace("Consumer worker container already stopped")
+            return
+        }
+        log.trace("Stopping consumer worker container: workers={}, timeout={}", workers.size, timeout)
 
         supervisorTask?.cancel(false)
         scheduler.shutdown()
@@ -117,7 +127,10 @@ internal class ConsumerWorkerContainer<T>(
         }
 
         val snapshot = workers.toList()
-        if (snapshot.isEmpty()) return
+        if (snapshot.isEmpty()) {
+            log.trace("Consumer worker container stopped: no workers to stop")
+            return
+        }
 
         val executor = Executors.newVirtualThreadPerTaskExecutor()
         try {
@@ -133,6 +146,7 @@ internal class ConsumerWorkerContainer<T>(
             executor.shutdown()
         }
         workers.clear()
+        log.trace("Consumer worker container stopped")
     }
 
 }

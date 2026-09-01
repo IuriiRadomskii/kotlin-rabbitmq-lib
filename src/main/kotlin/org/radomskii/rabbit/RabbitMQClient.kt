@@ -7,6 +7,7 @@ import org.radomskii.rabbit.config.ReconnectionConfig
 import org.radomskii.rabbit.consumer.RabbitConsumer
 import org.radomskii.rabbit.publisher.RabbitPublisher
 import org.radomskii.rabbit.resources.ConnectionPool
+import org.slf4j.LoggerFactory
 import java.io.Closeable
 import java.util.concurrent.CopyOnWriteArrayList
 import java.util.concurrent.atomic.AtomicBoolean
@@ -23,13 +24,16 @@ class RabbitMQClient private constructor(
     private val closed = AtomicBoolean(false)
 
     init {
+        log.trace("Initializing RabbitMQClient: connectionCount={}", connectionCount)
         connectionPool.init()
+        log.trace("RabbitMQClient initialized")
     }
 
     fun <T> createPublisher(config: PublisherConfig<T>): RabbitPublisher<T> {
         check(!closed.get()) { "RabbitMQClient is closed" }
         val publisher = RabbitPublisher(connectionPool, config)
         publishers.add(publisher)
+        log.trace("Publisher created: {}", publisher)
         return publisher
     }
 
@@ -37,16 +41,21 @@ class RabbitMQClient private constructor(
         check(!closed.get()) { "RabbitMQClient is closed" }
         val consumer = RabbitConsumer(connectionPool, config, reconnectionConfig)
         consumers.add(consumer)
+        log.trace("Consumer created: {}", consumer)
         return consumer
     }
 
     override fun close() {
         if (closed.compareAndSet(false, true)) {
+            log.trace("Closing RabbitMQClient: consumers={}", consumers.size)
 
             consumers.forEach { if (it.isRunning()) it.stop() }
             consumers.clear()
 
             connectionPool.close()
+            log.trace("RabbitMQClient closed")
+        } else {
+            log.trace("RabbitMQClient already closed")
         }
     }
 
@@ -68,6 +77,8 @@ class RabbitMQClient private constructor(
     }
 
     companion object {
+        private val log = LoggerFactory.getLogger(RabbitMQClient::class.java)
+
         @JvmStatic
         fun builder(): Builder = Builder()
     }

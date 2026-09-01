@@ -40,9 +40,13 @@ internal class ConnectionPool(
     fun init() {
         lifecycleLock.withLock {
             check(!closed.get()) { "ConnectionPool is closed" }
-            if (!initialized.compareAndSet(false, true)) return
+            if (!initialized.compareAndSet(false, true)) {
+                log.trace("ConnectionPool already initialized, skipping")
+                return
+            }
+            log.trace("Initializing connection pool: connectionCount={}", connectionCount)
             scheduleConnectionAttempt(
-                reconnectionConfig.maxAttempts,
+                numberOfAttempt = 1,
                 onSuccess = { connections.add(it) }
             )
             val pollMillis = reconnectionConfig.retryInterval.toMillis()
@@ -52,6 +56,7 @@ internal class ConnectionPool(
                 pollMillis,
                 TimeUnit.MILLISECONDS
             )
+            log.trace("Capacity supervisor scheduled: pollIntervalMillis={}", pollMillis)
         }
     }
 
@@ -63,14 +68,19 @@ internal class ConnectionPool(
         val start = roundRobin.getAndIncrement()
         for (offset in snapshot.indices) {
             val candidate = snapshot[(start + offset).mod(snapshot.size)]
-            if (candidate.isOpen) return candidate
+            if (candidate.isOpen) {
+                log.trace("Selected connection from pool: {}", candidate)
+                return candidate
+            }
         }
+        log.trace("No open connections available in pool: poolSize={}", snapshot.size)
         throw RabbitConnectionException("No open connections available")
     }
 
     override fun close() {
         lifecycleLock.withLock {
             if (closed.compareAndSet(false, true)) {
+                log.trace("Closing connection pool: connections={}", connections.size)
                 capacitySupervisorTask?.cancel(false)
                 scalingScheduler.shutdown()
                 connectionRetryScheduler.shutdown()
@@ -82,6 +92,9 @@ internal class ConnectionPool(
                 }
                 connections.forEach { it.close() }
                 connections.clear()
+                log.trace("Connection pool closed")
+            } else {
+                log.trace("Connection pool already closed")
             }
         }
     }
