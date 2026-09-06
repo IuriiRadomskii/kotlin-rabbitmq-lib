@@ -32,6 +32,8 @@ dependencies {
     testImplementation("org.testcontainers:testcontainers:1.19.3")
     testImplementation("org.testcontainers:rabbitmq:1.19.3")
     testImplementation("org.testcontainers:junit-jupiter:1.19.3")
+    testImplementation("org.testcontainers:toxiproxy:1.19.3")
+    testImplementation("eu.rekawek.toxiproxy:toxiproxy-java:2.1.7")
 
     // Logging for tests
     testImplementation("ch.qos.logback:logback-classic:1.4.14")
