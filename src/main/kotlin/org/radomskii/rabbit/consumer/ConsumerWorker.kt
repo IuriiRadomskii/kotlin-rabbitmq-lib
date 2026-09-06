@@ -39,7 +39,7 @@ internal class ConsumerWorker<T>(
     }
 
     fun start() {
-        log.trace("Starting consumer worker {}: queues={}, prefetchCount={}, autoAck={}", id, config.queues, config.prefetchCount, config.autoAck)
+        log.trace("Starting consumer worker {}: queues={}, prefetchCount={}", id, config.queues, config.prefetchCount)
         channel.basicQos(config.prefetchCount)
 
         val deliverCallback = DeliverCallback { consumerTag, delivery ->
@@ -59,7 +59,7 @@ internal class ConsumerWorker<T>(
             failed.set(true)
         }
         config.queues.forEach { queue ->
-            consumerTags += channel.basicConsume(queue, config.autoAck, deliverCallback, cancelCallback)
+            consumerTags += channel.basicConsume(queue, false, deliverCallback, cancelCallback)
         }
         log.trace("Worker {} subscribed: consumerTags={}", id, consumerTags)
         running.set(true)
@@ -104,12 +104,10 @@ internal class ConsumerWorker<T>(
             log.trace("Worker {} handling message: deliveryTag={}, messageId={}", id, deliveryTag, incomingMessage.metadata.messageId)
             val result = handler.handle(incomingMessage)
             log.trace("Worker {} handled message: deliveryTag={}, result={}", id, deliveryTag, result)
-            if (!config.autoAck) settle(incomingMessage.deliveryTag, result)
+            settle(incomingMessage.deliveryTag, result)
         } catch (e: Exception) {
             log.error("Worker {} failed to process delivery: deliveryTag={}", id, deliveryTag, e)
-            if (!config.autoAck) {
-                runCatching { channel.basicNack(delivery.envelope.deliveryTag, false, true) }
-            }
+            runCatching { channel.basicNack(delivery.envelope.deliveryTag, false, true) }
         }
     }
 
@@ -141,9 +139,9 @@ internal class ConsumerWorker<T>(
     private fun settle(deliveryTag: Long, result: ConsumeResult) {
         log.trace("Worker {} settling delivery: deliveryTag={}, result={}", id, deliveryTag, result)
         when (result) {
-            is ConsumeResult.Ack -> channel.basicAck(deliveryTag, false)
-            is ConsumeResult.Nack -> channel.basicNack(deliveryTag, false, result.requeue)
-            is ConsumeResult.Reject -> channel.basicReject(deliveryTag, result.requeue)
+            ConsumeResult.Ack -> channel.basicAck(deliveryTag, false)
+            ConsumeResult.Nack -> channel.basicNack(deliveryTag, false, false)
+            ConsumeResult.Requeue -> channel.basicNack(deliveryTag, false, true)
         }
     }
 }

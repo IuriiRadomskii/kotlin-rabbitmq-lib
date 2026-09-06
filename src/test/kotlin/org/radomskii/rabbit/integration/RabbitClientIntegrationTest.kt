@@ -124,7 +124,7 @@ class RabbitClientIntegrationTest {
             .build()
         consumer.start { message ->
             if (attempts.getAndIncrement() == 0) {
-                ConsumeResult.Nack(requeue = true)
+                ConsumeResult.Requeue
             } else {
                 received.put(message.payload)
                 ConsumeResult.Ack
