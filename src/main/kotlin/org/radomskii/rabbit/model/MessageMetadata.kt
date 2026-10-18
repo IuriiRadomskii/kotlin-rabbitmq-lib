@@ -4,10 +4,6 @@ import java.time.Duration
 import java.time.Instant
 import java.util.UUID
 
-/**
- * Metadata shared by published and consumed messages: identity, timing, and
- * AMQP properties that are independent of the payload's wire format.
- */
 data class MessageMetadata(
     val messageId: String = UUID.randomUUID().toString(),
     val timestamp: Instant = Instant.now(),

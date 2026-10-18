@@ -21,16 +21,19 @@ dependencies {
 
     testImplementation(kotlin("test"))
     testImplementation("org.junit.jupiter:junit-jupiter:5.10.1")
+    testImplementation("org.awaitility:awaitility-kotlin:3.1.2")
 
     // Mocking
     testImplementation("org.mockito:mockito-core:5.14.2")
-    testImplementation("org.mockito:mockito-junit-jupiter:5.14.2")
+    testImplementation(platform("org.junit:junit-bom:5.14.2"))
     testImplementation("org.mockito.kotlin:mockito-kotlin:5.4.0")
 
     // TestContainers
     testImplementation("org.testcontainers:testcontainers:1.19.3")
     testImplementation("org.testcontainers:rabbitmq:1.19.3")
     testImplementation("org.testcontainers:junit-jupiter:1.19.3")
+    testImplementation("org.testcontainers:toxiproxy:1.19.3")
+    testImplementation("eu.rekawek.toxiproxy:toxiproxy-java:2.1.7")
 
     // Logging for tests
     testImplementation("ch.qos.logback:logback-classic:1.4.14")

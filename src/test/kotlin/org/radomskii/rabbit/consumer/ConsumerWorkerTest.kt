@@ -13,7 +13,6 @@ import org.mockito.kotlin.any
 import org.mockito.kotlin.argumentCaptor
 import org.mockito.kotlin.eq
 import org.mockito.kotlin.mock
-import org.mockito.kotlin.never
 import org.mockito.kotlin.timeout
 import org.mockito.kotlin.verify
 import org.mockito.kotlin.whenever
@@ -45,17 +44,16 @@ class ConsumerWorkerTest {
 
     private fun startWorker(
         result: ConsumeResult = ConsumeResult.Ack,
-        autoAck: Boolean = false,
         capturedMessage: AtomicReference<String>? = null,
         latch: CountDownLatch,
         deserializer: MessageSerializer<String> = echoDeserializer
     ): Started {
         val channel = mock<Channel>()
         val deliverCaptor = argumentCaptor<DeliverCallback>()
-        whenever(channel.basicConsume(eq("q1"), eq(autoAck), deliverCaptor.capture(), any<CancelCallback>()))
+        whenever(channel.basicConsume(eq("q1"), eq(false), deliverCaptor.capture(), any<CancelCallback>()))
             .thenReturn("consumer-tag")
 
-        val config = ConsumerConfig(queues = listOf("q1"), deserializer = deserializer, autoAck = autoAck)
+        val config = ConsumerConfig(queues = listOf("q1"), deserializer = deserializer)
         val handler = MessageHandler<String> { message ->
             capturedMessage?.set(message.payload)
             latch.countDown()
@@ -92,7 +90,7 @@ class ConsumerWorkerTest {
     @Test
     fun shouldNackWithoutRequeueWhenHandlerReturnsNack() {
         val latch = CountDownLatch(1)
-        val started = startWorker(result = ConsumeResult.Nack(requeue = false), latch = latch)
+        val started = startWorker(result = ConsumeResult.Nack, latch = latch)
 
         started.deliverCallback.handle("consumer-tag", delivery())
 
@@ -101,26 +99,14 @@ class ConsumerWorkerTest {
     }
 
     @Test
-    fun shouldRejectWithRequeueWhenHandlerReturnsReject() {
+    fun shouldNackWithRequeueWhenHandlerReturnsRequeue() {
         val latch = CountDownLatch(1)
-        val started = startWorker(result = ConsumeResult.Reject(requeue = true), latch = latch)
+        val started = startWorker(result = ConsumeResult.Requeue, latch = latch)
 
         started.deliverCallback.handle("consumer-tag", delivery())
 
         assertThat(latch.await(2, TimeUnit.SECONDS)).isTrue()
-        verify(started.channel, timeout(1000)).basicReject(7L, true)
-    }
-
-    @Test
-    fun shouldNotSettleDeliveryWhenAutoAckEnabled() {
-        val latch = CountDownLatch(1)
-        val started = startWorker(result = ConsumeResult.Ack, autoAck = true, latch = latch)
-
-        started.deliverCallback.handle("consumer-tag", delivery())
-
-        assertThat(latch.await(2, TimeUnit.SECONDS)).isTrue()
-        Thread.sleep(200)
-        verify(started.channel, never()).basicAck(any(), any())
+        verify(started.channel, timeout(1000)).basicNack(7L, false, true)
     }
 
     @Test
